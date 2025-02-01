@@ -1,0 +1,31 @@
+#!/bin/bash
+
+cmd=$1
+model=$2
+llamapid=$(pgrep llama)
+cwd=$(pwd)
+
+if [ "$cmd" == "start" ]; then
+  if [ ! -z "$llamapid" ]; then
+    echo llama server already running
+  else
+    cd llama.cpp 
+      ./llama-server -m "../$model" --port 9000 > /tmp/llama.log 2>&1 &
+    cd $cwd
+  fi
+elif [ "$cmd" == "stop" ]; then
+  if [ -z "$llamapid" ]; then
+    echo llama server not running
+  else
+    kill -9 "$llamapid"
+  fi
+elif [ "$cmd" == "status" ]; then
+  if [ ! -z "$llamapid" ]; then
+    echo llama server running with pid "$llamapid"
+  else
+    echo llama server not running
+  fi
+else
+  echo 'usage ./script/llama start|stop|status'
+fi
+
