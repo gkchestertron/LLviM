@@ -1,6 +1,7 @@
 " Requires an already running llama.cpp server
 " To install either copy or symlink to ~/.vim/autoload/llama.vim
 " Then start with either :call llama#doLlamaGen(),
+
 " or add a keybind to your vimrc such as
 " nnoremap Z :call llama#doLlamaGen()<CR>
 " Similarly, you could add an insert mode keybind with
@@ -23,34 +24,123 @@
 " Example override:
 " !*{"logit_bias": [[13, -5], [2, false]], "temperature": 1, "top_k": 5, "top_p": 0.5, "n_predict": 256, "repeat_last_n": 256, "repeat_penalty": 1.17647}
 if !exists("g:llama_api_url")
-    let g:llama_api_url= "127.0.0.1:9000"
+    let g:llama_api_url= "127.0.0.1:8080"
 endif
 if !exists("g:llama_overrides")
    let g:llama_overrides = {}
 endif
 "const s:querydata = {"n_predict": 256, "stop": [ "\n" ], "stream": v:true }
-const s:querydata = {"n_predict": 2048, "stream": v:true }
+const s:querydata = {"n_predict": -1, "stream": v:true }
 const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System:\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url .. '/completion', '--header', "Content-Type: application/json"]
 let s:linedict = {}
 
 function llama#openOrClosePromptBuffer()
- if bufname("%") == "/tmp/llama-prompt"
-   execute "w|hide"
- else
-   execute "vnew|e /tmp/llama-prompt"
-   call writefile([""], "/tmp/llama-context")
-   for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
-     let filename = buf.name
-     if !filereadable(filename) || filename == "/tmp/llama-prompt"
-       continue
-     endif
-     let lines = readfile(filename)
-     call writefile([filename, "==========", "\n"], "/tmp/llama-context", "a")
-     call writefile(lines, "/tmp/llama-context", "a")
-     call writefile(["==========", "\n"], "/tmp/llama-context", "a")
-   endfor
-   call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python)"], "/tmp/llama-context", "a")
- endif
+  let bufnr = bufnr("/tmp/llama-prompt")
+  if bufname("%") == "/tmp/llama-prompt"
+    execute "w|hide"
+  else
+    " Check if the buffer is already open and switch to it
+    if bufnr != -1
+      execute "bdelete " . bufnr
+    endif
+    execute "vnew|e /tmp/llama-prompt"
+    call writefile([""], "/tmp/llama-context")
+    for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
+      let filename = buf.name
+      if !filereadable(filename) || filename == "/tmp/llama-prompt"
+        continue
+      endif
+      let lines = readfile(filename)
+      call writefile([filename, "==========", "\n"], "/tmp/llama-context", "a")
+      call writefile(lines, "/tmp/llama-context", "a")
+      call writefile(["==========", "\n"], "/tmp/llama-context", "a")
+    endfor
+    call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python)"], "/tmp/llama-context", "a")
+  endif
+endfunction
+
+function llama#extractLastCodeBlock(bufn)
+    execute "buffer " . a:bufn
+    execute "write"
+
+    " Define the path to the file
+    let l:file_path = '/tmp/llama-prompt'
+
+    " Read the file content
+    if !filereadable(l:file_path)
+        echo "File not found!"
+        return
+    endif
+
+    let l:lines = readfile(l:file_path)
+    if empty(l:lines)
+        echo "File is empty!"
+        return
+    endif
+
+    " Initialize variables
+    let l:block_number = 1
+    let l:in_block = 0
+    let l:code_block = []
+
+    " Loop through each line in the file
+    for l:line in l:lines
+        " Check for the start of a block
+        if l:line =~# '^\s*```'
+            if l:in_block
+                " End of a block
+                let l:in_block = 0
+                let l:block = join(l:code_block, "\n")
+                call setreg(string(l:block_number), l:block, 'l')
+                echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
+                let l:block_number += 1
+                let l:code_block = []
+            else
+                " Start of a block
+                let l:in_block = 1
+            endif
+        elseif l:in_block
+            " Add line to the current block
+            call add(l:code_block, l:line)
+        endif
+    endfor
+
+    " Capture the last block if any
+    if l:in_block
+        let l:block = join(l:code_block, "\n")
+        call setreg(string(l:block_number), l:block, 'l')
+        echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
+    endif
+endfunction
+
+function! llama#saveHighlightedText()
+  let buffer_name = "/tmp/llama-prompt"
+
+  " Get the selected text
+  execute 'normal "+Y'
+  let stx = &syntax
+  let selected_text = getreg('"')
+
+  call llama#openOrClosePromptBuffer()
+
+  " Clear the buffer
+  %d
+
+  " Place the text in the default register
+  call setreg('"', selected_text, 'l')
+
+  " Split selected_text into lines
+  let lines = split(selected_text, '\n')
+
+  " Append each line with proper line breaks and code fence
+  call append(line('$'), "```" . stx)
+  for line in lines
+    call append(line('$'), line)
+  endfor
+  call append(line('$'), "```")
+
+  echo "Text saved and appended to buffer: " . buffer_name
+  execute 'startinsert'
 endfunction
 
 func s:callbackHandler(bufn, channel, msg)
@@ -74,9 +164,11 @@ func s:callbackHandler(bufn, channel, msg)
     let s:linedict[l:bufn] = s:linedict[l:bufn] + len(newtext)-1
  endif
  if has_key(l:decoded_msg, "stop") && l:decoded_msg.stop
+     call llama#extractLastCodeBlock(a:bufn)
      echo "Finished generation"
  endif
 endfunction
+
 
 func llama#doLlamaGen()
    if exists("b:job")
@@ -86,10 +178,17 @@ func llama#doLlamaGen()
       endif
    endif
 
+   let current_mode = mode()
    if bufname("%") != "/tmp/llama-prompt"
+     if current_mode ==# 'v' || current_mode ==# 'V' || current_mode ==# "\<C-v>"
+       call llama#saveHighlightedText()
+     endif
      return
    endif
 
+   if current_mode == "i"
+     execute "stopinsert|o|stopinsert"
+   endif
    echo "starting generation"
 
    let l:cbuffer = bufnr("%")
@@ -110,14 +209,14 @@ func llama#doLlamaGen()
    endif
 
    if mode() == "i"
-     let l:querydata.prompt = join(l:buflines, "\n")
+     let l:querydata.prompt = join(["User:", l:buflines, "\n", "Assistant:"])
      let s:linedict[l:cbuffer] = line('.')
    elseif mode() ==# "n"
      let l:buflines = getbufline(l:cbuffer, 1, 1000)
      let l:querydata.prompt = join(l:buflines, "\n")
      let s:linedict[l:cbuffer] = line('$')
      let context = join(readfile("/tmp/llama-context"))
-     let l:querydata.prompt = join([context, l:querydata.prompt])
+     let l:querydata.prompt = join(["User:", context, l:querydata.prompt, "Assistant:\n"])
    else
      execute 'normal "aY'
      let l:selectedText = getreg("a")
@@ -127,14 +226,12 @@ func llama#doLlamaGen()
        let l:failed = appendbufline(l:cbuffer, l:line_end, '')
        let s:linedict[l:cbuffer] = l:line_end + 1
        call setreg("a", "")
-       let context = join(readfile("/tmp/llama-context"))
-       let l:querydata.prompt = join([context, l:querydata.prompt])
+       let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
      else
        let l:querydata.prompt = join(l:buflines, "\n")
        let l:failed = appendbufline(l:cbuffer, line('.'), '')
        let s:linedict[l:cbuffer] = line('.') + 1
-       let context = join(readfile("/tmp/llama-context"))
-       let l:querydata.prompt = join([context, l:querydata.prompt])
+       let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
      endif
    endif
 
@@ -191,3 +288,4 @@ func s:tokenCountCallback(channel, msg)
     let resp = json_decode(a:msg)
     echo len(resp.tokens)
 endfunction
+
