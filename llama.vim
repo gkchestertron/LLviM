@@ -47,7 +47,7 @@ function llama#openOrClosePromptBuffer()
     call writefile([""], "/tmp/llama-context")
     for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
       let filename = buf.name
-      if !filereadable(filename) || filename == "/tmp/llama-prompt"
+      if !filereadable(filename) || filename == "/tmp/llama-prompt" || filename == "/private/tmp/llama-prompt"
         continue
       endif
       let lines = readfile(filename)
