@@ -140,7 +140,6 @@ function! llama#saveHighlightedText()
   call append(line('$'), "```")
 
   echo "Text saved and appended to buffer: " . buffer_name
-  execute 'startinsert'
 endfunction
 
 func s:callbackHandler(bufn, channel, msg)
