@@ -44,18 +44,6 @@ function llama#openOrClosePromptBuffer()
       execute "bdelete " . bufnr
     endif
     execute "vnew|e /tmp/llama-prompt"
-    call writefile([""], "/tmp/llama-context")
-    for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
-      let filename = buf.name
-      if !filereadable(filename) || filename == "/tmp/llama-prompt" || filename == "/private/tmp/llama-prompt"
-        continue
-      endif
-      let lines = readfile(filename)
-      call writefile([filename, "==========", "\n"], "/tmp/llama-context", "a")
-      call writefile(lines, "/tmp/llama-context", "a")
-      call writefile(["==========", "\n"], "/tmp/llama-context", "a")
-    endfor
-    call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python)"], "/tmp/llama-context", "a")
   endif
 endfunction
 
@@ -189,6 +177,20 @@ func llama#doLlamaGen()
      execute "stopinsert|o|stopinsert"
    endif
    echo "starting generation"
+
+  " load files into context
+  call writefile([""], "/tmp/llama-context")
+  for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
+    let filename = buf.name
+    if !filereadable(filename) || filename == "/tmp/llama-prompt" || filename == "/private/tmp/llama-prompt"
+      continue
+    endif
+    let lines = readfile(filename)
+    call writefile([filename, "==========", "\n"], "/tmp/llama-context", "a")
+    call writefile(lines, "/tmp/llama-context", "a")
+    call writefile(["==========", "\n"], "/tmp/llama-context", "a")
+  endfor
+  call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python)"], "/tmp/llama-context", "a")
 
    let l:cbuffer = bufnr("%")
    let s:linedict[l:cbuffer] = line('$')
