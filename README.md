@@ -1,8 +1,9 @@
 # LLVIM
 LLM Plugin for VIM because I'm old but want to try new things, using llama.cpp and some ugly vimscript.
+(Heavily copied from an old example provided in the llama.cpp repo).
 
 ## Setup
-1. Install and build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project).
+1. Install, build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project), and run your favorite model (deepseek-coder is pretty cool).
 2. Copy the llvim.vim file from this repo to `~/.vim/autoload/`
 3. Copy the keybindings below into your `~/.vimrc`
 ```vim
@@ -27,10 +28,9 @@ The plugin operates by calling the llama server with the context you provide via
 `CTRL-B` opens the prompt buffer, which writes a file to `/tmp/llama-prompt`.
 `CTRL-K` will do nothing, unless you are in visual mode. In visual mode it will copy the selected text into the prompt buffer.
 
-
 ### The Prompt Buffer
 `CTRL-B` opens the prompt buffer, which writes a file to `/tmp/llama-prompt`.
-`CTRL-K` sends the context/prompt to the server, appends the returned completion to the buffer, and copies each block inside a code fence ("```language...```") to a numbered buffer. The first code-fenced block will also be copied to the default buffer so you can easily paste it into another file.
+`CTRL-K` sends the context/prompt to the server, appends the returned completion to the buffer, and copies each block inside a code fence ("```language...```") to a numbered register. The first code-fenced block will also be copied to the default register so you can easily paste it into another file.
 
 #### Context
 What context is sent depends on what mode you are in:
