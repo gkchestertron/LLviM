@@ -173,10 +173,12 @@ func llama#doLlamaGen()
      return
    endif
 
-   if current_mode == "i"
-     execute "stopinsert|o|stopinsert"
-   endif
    echo "starting generation"
+   sleep 500m
+   if current_mode == "i"
+     call feedkeys("\<Esc>o\<Esc>", "t")
+     execute "write"
+   endif
 
   " load files into context
   call writefile([""], "/tmp/llama-context")
@@ -190,7 +192,7 @@ func llama#doLlamaGen()
     call writefile(lines, "/tmp/llama-context", "a")
     call writefile(["==========", "\n"], "/tmp/llama-context", "a")
   endfor
-  call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python)"], "/tmp/llama-context", "a")
+  call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Do not rewrite the whole file unless specifically asked. Focus on the block or function in question. Clearly comment your code."], "/tmp/llama-context", "a")
 
    let l:cbuffer = bufnr("%")
    let s:linedict[l:cbuffer] = line('$')
@@ -213,6 +215,7 @@ func llama#doLlamaGen()
      let l:querydata.prompt = join(["User:", l:buflines, "\n", "Assistant:"])
      let s:linedict[l:cbuffer] = line('.')
    elseif mode() ==# "n"
+     call feedkeys("o\<Esc>", "t")
      let l:buflines = getbufline(l:cbuffer, 1, 1000)
      let l:querydata.prompt = join(l:buflines, "\n")
      let s:linedict[l:cbuffer] = line('$')
