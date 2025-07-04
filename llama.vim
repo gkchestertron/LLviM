@@ -31,7 +31,7 @@ if !exists("g:llama_overrides")
 endif
 "const s:querydata = {"n_predict": 256, "stop": [ "\n" ], "stream": v:true }
 const s:querydata = {"n_predict": -1, "stream": v:true }
-const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System:\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url .. '/completion', '--header', "Content-Type: application/json"]
+const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System:\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
 
 function llama#openOrClosePromptBuffer()
@@ -192,7 +192,7 @@ func llama#doLlamaGen()
     call writefile(lines, "/tmp/llama-context", "a")
     call writefile(["==========", "\n"], "/tmp/llama-context", "a")
   endfor
-  call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Do not rewrite the whole file unless specifically asked. Focus on the block or function in question. Clearly comment your code."], "/tmp/llama-context", "a")
+  call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Do not rewrite the whole file unless specifically asked. Focus on the block or function in question. Concisely comment your code."], "/tmp/llama-context", "a")
 
    let l:cbuffer = bufnr("%")
    let s:linedict[l:cbuffer] = line('$')
@@ -215,7 +215,6 @@ func llama#doLlamaGen()
      let l:querydata.prompt = join(["User:", l:buflines, "\n", "Assistant:"])
      let s:linedict[l:cbuffer] = line('.')
    elseif mode() ==# "n"
-     call feedkeys("o\<Esc>", "t")
      let l:buflines = getbufline(l:cbuffer, 1, 1000)
      let l:querydata.prompt = join(l:buflines, "\n")
      let s:linedict[l:cbuffer] = line('$')
@@ -242,7 +241,8 @@ func llama#doLlamaGen()
 
    let l:curlcommand = copy(s:curlcommand)
    if exists("g:llama_api_key")
-       call extend(l:curlcommand, ['--header', 'Authorization: Bearer ' .. g:llama_api_key])
+       call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llama_api_key])
+       call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
    endif
    let l:curlcommand[2] = json_encode(l:querydata)
    let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
