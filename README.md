@@ -26,15 +26,14 @@ The plugin operates by calling the llama server with the context you provide via
 
 ### When Editing a File
 `CTRL-B` opens the prompt buffer, which writes a file to `/tmp/llama-prompt`.
-`CTRL-K` will do nothing, unless you are in visual mode. In visual mode it will copy the selected text into the prompt buffer.
+`CTRL-K`:
+- in `insert` mode, will send the current line and default register to be rewritten. Great for Deleting a block of code and giving instructions to rewrite or extend.
+- in `visual` mode, will copy the selected lines to the context buffer and open it.
+- in `normal` mode, will copy the default buffer (last thing yanked) to the context buffer and open in.
 
-### The Prompt Buffer
-`CTRL-B` opens the prompt buffer, which writes a file to `/tmp/llama-prompt`.
-`CTRL-K` sends the context/prompt to the server, appends the returned completion to the buffer, and copies each block inside a code fence ("```language...```") to a numbered register. The first code-fenced block will also be copied to the default register so you can easily paste it into another file.
-
-#### Context
-What context is sent depends on what mode you are in:
-- `normal mode` will send all open files and the whole prompt buffer.
-- `insert mode` will send only the current line - great for asking simple questions without having to wait for the model to process a large context.
-- `visual mode` will send only the selected text as context.
-In all cases, additional instructions are appended to encase all code in fences for syntax highlighting and easy copying.
+### The Context Buffer
+`CTRL-B` closes the prompt buffer.
+`CTRL-K`:
+- in `insert` mode, will send the buffer up to and including the current line for generation.
+- in `visual` mode, will send just the selected text for generation.
+- in `normal` mode, will send the entire context buffer and all open files for generation.
