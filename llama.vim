@@ -31,9 +31,10 @@ if !exists("g:llama_overrides")
 endif
 "const s:querydata = {"n_predict": 256, "stop": [ "\n" ], "stream": v:true }
 const s:querydata = {"n_predict": -1, "stream": v:true }
-const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System:\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url, '--header', "Content-Type: application/json"]
+const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistent.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
 
+" handle switching to and from context buffer
 function llama#openOrClosePromptBuffer()
   let bufnr = bufnr("/tmp/llama-prompt")
   if bufname("%") == "/tmp/llama-prompt"
@@ -47,6 +48,7 @@ function llama#openOrClosePromptBuffer()
   endif
 endfunction
 
+" put last given code block in default register
 function llama#extractLastCodeBlock(bufn)
     execute "buffer " . a:bufn
     execute "write"
@@ -73,46 +75,46 @@ function llama#extractLastCodeBlock(bufn)
 
     " Loop through each line in the file
     for l:line in l:lines
-        " Check for the start of a block
-        if l:line =~# '^\s*```'
-            if l:in_block
-                " End of a block
-                let l:in_block = 0
-                let l:block = join(l:code_block, "\n")
-                call setreg(string(l:block_number), l:block, 'l')
-                echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
-                let l:block_number += 1
-                let l:code_block = []
-            else
-                " Start of a block
-                let l:in_block = 1
-            endif
-        elseif l:in_block
-            " Add line to the current block
-            call add(l:code_block, l:line)
+      " Check for the start of a block
+      if l:line =~# '^\s*```'
+        if l:in_block
+          " End of a block
+          let l:in_block = 0
+          let l:block = join(l:code_block, "\n")
+          call setreg(string(l:block_number), l:block, 'l')
+          call setreg('"', l:block, 'l')
+          echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
+          let l:block_number += 1
+          let l:code_block = []
+        else
+          " Start of a block
+          let l:in_block = 1
         endif
+      elseif l:in_block
+        " Add line to the current block
+        call add(l:code_block, l:line)
+      endif
     endfor
 
     " Capture the last block if any
     if l:in_block
         let l:block = join(l:code_block, "\n")
         call setreg(string(l:block_number), l:block, 'l')
+        call setreg('"', l:block, 'l')
         echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
     endif
 endfunction
 
+" save selected lines for context
 function! llama#saveHighlightedText()
   let buffer_name = "/tmp/llama-prompt"
 
   " Get the selected text
-  execute 'normal "+Y'
+  "execute 'normal "+Y'
   let stx = &syntax
   let selected_text = getreg('"')
 
   call llama#openOrClosePromptBuffer()
-
-  " Clear the buffer
-  %d
 
   " Place the text in the default register
   call setreg('"', selected_text, 'l')
@@ -130,58 +132,55 @@ function! llama#saveHighlightedText()
   echo "Text saved and appended to buffer: " . buffer_name
 endfunction
 
+" handle data coming back from the model
 func s:callbackHandler(bufn, channel, msg)
- let l:bufn = a:bufn
- if len(a:msg) < 3
+  let l:bufn = a:bufn
+  if len(a:msg) < 3
     return
- elseif a:msg[0] == "d"
+  elseif a:msg[0] == "d"
     let l:msg = a:msg[6:-1]
- else
+  else
     let l:msg = a:msg
- endif
- let l:decoded_msg = json_decode(l:msg)
- let l:newtext = split(l:decoded_msg['content'], "\n", 1)
- if len(l:newtext) > 0
+  endif
+  let l:decoded_msg = json_decode(l:msg)
+  let l:newtext = split(l:decoded_msg['content'], "\n", 1)
+  if len(l:newtext) > 0
     call setbufline(l:bufn, s:linedict[l:bufn], getbufline(l:bufn, s:linedict[l:bufn])[0] .. newtext[0])
- else
+  else
     echo "nothing genned"
- endif
- if len(newtext) > 1
+  endif
+  if len(l:newtext) > 1
     let l:failed = appendbufline(l:bufn, s:linedict[l:bufn], newtext[1:-1])
     let s:linedict[l:bufn] = s:linedict[l:bufn] + len(newtext)-1
- endif
- if has_key(l:decoded_msg, "stop") && l:decoded_msg.stop
-     call llama#extractLastCodeBlock(a:bufn)
-     echo "Finished generation"
- endif
+  endif
+  if has_key(l:decoded_msg, "stop") && l:decoded_msg.stop
+    call llama#extractLastCodeBlock(a:bufn)
+    echo "Finished generation"
+  endif
 endfunction
 
 
 func llama#doLlamaGen()
-   if exists("b:job")
-      if job_status(b:job) == "run"
-         call job_stop(b:job)
-         return
-      endif
-   endif
+  " stop running completion task if it exists
+  if exists("b:job")
+    if job_status(b:job) == "run"
+      call job_stop(b:job)
+      return
+    endif
+  endif
 
-   let current_mode = mode()
-   if bufname("%") != "/tmp/llama-prompt"
-     if current_mode ==# 'v' || current_mode ==# 'V' || current_mode ==# "\<C-v>"
-       call llama#saveHighlightedText()
-     endif
-     return
-   endif
+  " get the current mode
+  let current_mode = mode()
 
-   echo "starting generation"
-   sleep 500m
-   if current_mode == "i"
-     call feedkeys("\<Esc>o\<Esc>", "t")
-     execute "write"
-   endif
+  " leave insert mode if we're in it
+  "if current_mode == "i"
+  "  call feedkeys("\<Esc>", "t")
+  "endif
 
-  " load files into context
+  " clear the context file
   call writefile([""], "/tmp/llama-context")
+
+  " copy open files into context
   for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
     let filename = buf.name
     if !filereadable(filename) || filename == "/tmp/llama-prompt" || filename == "/private/tmp/llama-prompt"
@@ -192,60 +191,156 @@ func llama#doLlamaGen()
     call writefile(lines, "/tmp/llama-context", "a")
     call writefile(["==========", "\n"], "/tmp/llama-context", "a")
   endfor
-  call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Do not rewrite the whole file unless specifically asked. Focus on the block or function in question. Concisely comment your code."], "/tmp/llama-context", "a")
 
-   let l:cbuffer = bufnr("%")
-   let s:linedict[l:cbuffer] = line('$')
-   let l:buflines = getbufline(l:cbuffer, line("."))
-   let l:querydata = copy(s:querydata)
-   call extend(l:querydata, g:llama_overrides)
-   if exists("w:llama_overrides")
-      call extend(l:querydata, w:llama_overrides)
-   endif
-   if exists("b:llama_overrides")
-      call extend(l:querydata, b:llama_overrides)
-   endif
-   if l:buflines[0][0:1] == '!*'
-      let l:userdata = json_decode(l:buflines[0][2:-1])
-      call extend(l:querydata, l:userdata)
-      let l:buflines = l:buflines[1:-1]
-   endif
-
-   if mode() == "i"
-     let l:querydata.prompt = join(["User:", l:buflines, "\n", "Assistant:"])
-     let s:linedict[l:cbuffer] = line('.')
-   elseif mode() ==# "n"
-     let l:buflines = getbufline(l:cbuffer, 1, 1000)
-     let l:querydata.prompt = join(l:buflines, "\n")
-     let s:linedict[l:cbuffer] = line('$')
-     let context = join(readfile("/tmp/llama-context"))
-     let l:querydata.prompt = join(["User:", context, l:querydata.prompt, "Assistant:\n"])
-   else
-     execute 'normal "aY'
-     let l:selectedText = getreg("a")
-     if len(split(l:selectedText, "\n")) > 1
-       let [l:line_end, l:column_end] = getpos("'>")[1:2]
-       let l:querydata.prompt = l:selectedText
-       let l:failed = appendbufline(l:cbuffer, l:line_end, '')
-       let s:linedict[l:cbuffer] = l:line_end + 1
-       call setreg("a", "")
-       let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
-     else
-       let l:querydata.prompt = join(l:buflines, "\n")
-       let l:failed = appendbufline(l:cbuffer, line('.'), '')
-       let s:linedict[l:cbuffer] = line('.') + 1
-       let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
-     endif
-   endif
+  " prompt
+  "call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Do not rewrite the whole file unless specifically asked. Focus on the block or function in question. Concisely comment your code."], "/tmp/llama-context", "a")
 
 
-   let l:curlcommand = copy(s:curlcommand)
-   if exists("g:llama_api_key")
-       call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llama_api_key])
-       call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
-   endif
-   let l:curlcommand[2] = json_encode(l:querydata)
-   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
+  " get current buffer
+  let l:cbuffer = bufnr("%")
+
+  " get number of last line in buffer and save in the line/buffer map
+  let s:linedict[l:cbuffer] = line('$')
+
+  " gets the current line
+  let l:buflines = getbufline(l:cbuffer, line("."))
+
+  " handle overriding settings
+  let l:querydata = copy(s:querydata)
+  call extend(l:querydata, g:llama_overrides)
+  if exists("w:llama_overrides")
+    call extend(l:querydata, w:llama_overrides)
+  endif
+  if exists("b:llama_overrides")
+    call extend(l:querydata, b:llama_overrides)
+  endif
+  if l:buflines[0][0:1] == '!*'
+    let l:userdata = json_decode(l:buflines[0][2:-1])
+    call extend(l:querydata, l:userdata)
+    let l:buflines = l:buflines[1:-1]
+  endif
+
+  " insert mode
+  if mode() ==# "i"
+
+    " in file
+    if bufname("%") != "/tmp/llama-prompt"
+      echo "sending last copied text and current line for generation"
+      sleep 500m
+
+      " get default register
+      let l:selectedText = getreg('"')
+      " get current line
+      let l:buflines = join(getbufline(l:cbuffer, line('.')), "\n")
+      " save the cursor position by the buffer name in the map
+      call setbufline(l:cbuffer, line('.'), "")
+      " save cursor position for gen
+      let s:linedict[l:cbuffer] = line('.')
+      " set the prompt string
+      let l:failed = appendbufline(l:cbuffer, line('.'), '')
+      "move cursor to after where it's gonna insert
+      call cursor(line('.') + 1, 0)
+      let l:baseprompt = "Concisely comment your code. Match indentation of provided code. Do not wrap code blocks in code fences. Do not indicate language. Do not explain. Do not return more than one example. Return only the line, lines or function asked for in your response."
+      let l:querydata.prompt = join(["User:", l:selectedText, "Rewrite the code above and do the following:", l:buflines, l:baseprompt, "Assistant:"], "\n")
+
+    " in context buffer
+    else
+      let l:cur_line = getbufline(l:cbuffer, line('.'))
+
+      " line is empty 
+      if l:cur_line[0] == ''
+        echo "doing nothing"
+        sleep 500m
+        return
+
+      " line is not empty
+      else
+        echo "sending up to current line for generation"
+        sleep 500m
+        " add a line
+        let l:failed = appendbufline(l:cbuffer, line('.'), '')
+        let l:failed = appendbufline(l:cbuffer, line('.'), '')
+        let l:failed = appendbufline(l:cbuffer, line('.'), '')
+        let l:failed = appendbufline(l:cbuffer, line('.'), '')
+        " get all lines up to cursor
+        let l:buflines = join(getbufline(l:cbuffer, 1, line('.')), "\n")
+        " save the cursor position by the buffer name in the map
+        let s:linedict[l:cbuffer] = line('.') + 2
+        "move cursor to after where it's gonna insert
+        call cursor(line('.') + 4, 0)
+        " set the prompt string
+        let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
+      endif
+    endif
+
+  " normal mode
+  elseif mode() ==# "n"
+
+    " in file - copy any previously selected text to buffer and open it
+    if bufname("%") != "/tmp/llama-prompt"
+      echo "loading selection into context buffer"
+      call llama#saveHighlightedText()
+      " get current buffer
+      let l:cbuffer = bufnr("%")
+      " add a line
+      let l:failed = appendbufline(l:cbuffer, line('$'), '')
+      normal! G$
+      startinsert
+      return
+
+    " in context buffer - send whole buffer and all open files
+    else
+      echo "sending all files and buffer for generation"
+      sleep 500m
+      let context = join(readfile("/tmp/llama-context"), "\n")
+      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code. Match indentation of provided code."
+      let l:buflines = getbufline(l:cbuffer, 1, '$')
+      let l:querydata.prompt = join(l:buflines, "\n")
+      let s:linedict[l:cbuffer] = line('$')
+      let l:querydata.prompt = join([context, "User:", l:baseprompt, l:querydata.prompt, "Assistant:\n"])
+    endif
+
+  " visual mode 
+  else
+    execute 'normal "aY'
+    let l:selectedText = getreg("a")
+
+    " in file - send selection to buffer
+    if bufname("%") != "/tmp/llama-prompt"
+      echo "loading selection into context buffer"
+      sleep 500m
+
+      call llama#saveHighlightedText()
+      " get current buffer
+      let l:cbuffer = bufnr("%")
+      " add a line
+      let l:failed = appendbufline(l:cbuffer, line('$'), '')
+      normal! G$
+      startinsert
+      return
+
+    " in buffer - just send selection
+    else
+      echo "sending selection for generation"
+      sleep 500m
+      let [l:line_end, l:column_end] = getpos("'>")[1:2]
+      let l:querydata.prompt = l:selectedText
+      let l:failed = appendbufline(l:cbuffer, l:line_end, '')
+      let s:linedict[l:cbuffer] = l:line_end + 1
+      call setreg("a", "")
+      let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
+    endif
+  endif
+
+  " call the model and pass the callback
+  let l:curlcommand = copy(s:curlcommand)
+  if exists("g:llama_api_key")
+    call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llama_api_key])
+    call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
+  endif
+  echo querydata.prompt
+  let l:curlcommand[2] = json_encode(l:querydata)
+  let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
 endfunction
 
 " Echos the tokkenization of the provided string , or cursor to end of word
