@@ -30,7 +30,7 @@ The plugin operates by calling the llama server with the context you provide via
 `CTRL-K`:
 - in `insert` mode, will send the current line and default register (last thing yanked) to be rewritten. Great for Deleting a block of code and giving instructions to rewrite or extend.
 - in `visual` mode, will copy the selected lines to the context buffer and open it.
-- in `normal` mode, will copy the default buffer (last thing yanked) to the context buffer and open in.
+- in `normal` mode, will send the default register, the current line, and all open files as context, and insert at the cursor line. Like insert mode, but sends open files for extra context. Great for things like "rewrite this test like the others".
 
 ### The Context Buffer
 `CTRL-B` closes the prompt buffer.

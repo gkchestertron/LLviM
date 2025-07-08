@@ -238,14 +238,22 @@ func llama#doLlamaGen()
 
     " in file - copy any previously selected text to buffer and open it
     if bufname("%") != "/tmp/llama-prompt"
-      call llama#saveHighlightedText()
-      " get current buffer
-      let l:cbuffer = bufnr("%")
-      " add a line
-      let l:failed = appendbufline(l:cbuffer, line('$'), '')
-      normal! G$
-      startinsert
-      return
+      echo "sending current line, default register, and all open files for generation"
+      sleep 500m
+
+      " get default register
+      let l:selectedText = getreg('"')
+      " get current line
+      let l:buflines = join(getbufline(l:cbuffer, line('.')), "\n")
+      " save the cursor position by the buffer name in the map
+      call setbufline(l:cbuffer, line('.'), "")
+      " save cursor position for gen
+      let s:linedict[l:cbuffer] = line('.')
+      let stx = &syntax
+      let context = join(readfile("/tmp/llama-context"), "\n")
+      let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
+      let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
+      let l:querydata.prompt = join(["User:", context, l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
 
     " in context buffer - send whole buffer and all open files
     else
@@ -268,7 +276,7 @@ func llama#doLlamaGen()
       " Move the cursor to the end of the buffer
       call cursor(line('$'), 0)
       " Combine the context, user prompt, base prompt, and buffer content into the final prompt
-      let l:querydata.prompt = join([context, "User:", l:baseprompt, l:querydata.prompt, "Assistant:\n"])
+      let l:querydata.prompt = join(["User:", context, l:baseprompt, l:querydata.prompt, "Assistant:\n"])
     endif
 
   " visual mode 
