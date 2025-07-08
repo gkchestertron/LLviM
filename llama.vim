@@ -42,7 +42,7 @@ function llama#openOrClosePromptBuffer()
   else
     " Check if the buffer is already open and switch to it
     if bufnr != -1
-      execute "bdelete " . bufnr
+      execute "w|bdelete " . bufnr
     endif
     execute "vnew|e /tmp/llama-prompt"
   endif
@@ -172,11 +172,6 @@ func llama#doLlamaGen()
   " get the current mode
   let current_mode = mode()
 
-  " leave insert mode if we're in it
-  "if current_mode == "i"
-  "  call feedkeys("\<Esc>", "t")
-  "endif
-
   " clear the context file
   call writefile([""], "/tmp/llama-context")
 
@@ -244,11 +239,6 @@ func llama#doLlamaGen()
     else
       let l:cur_line = getbufline(l:cbuffer, line('.'))
 
-      " line is empty 
-      if l:cur_line[0] == ''
-        echo "doing nothing"
-        sleep 500m
-        return
 
       " line is not empty
       else
@@ -340,49 +330,3 @@ func llama#doLlamaGen()
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
 endfunction
-
-" Echos the tokkenization of the provided string , or cursor to end of word
-" Onus is placed on the user to include the preceding space
-func llama#tokenizeWord(...)
-    if (a:0 > 0)
-        let l:input = a:1
-    else
-        exe "normal \"*ye"
-        let l:input = @*
-    endif
-    let l:querydata = {"content": l:input}
-    let l:curlcommand = copy(s:curlcommand)
-    let l:curlcommand[2] = json_encode(l:querydata)
-    let l:curlcommand[8] = g:llama_api_url .. "/tokenize"
-   let s:token_job = job_start(l:curlcommand, {"callback": function("s:tokenizeWordCallback", [l:input])})
-endfunction
-
-func s:tokenizeWordCallback(plaintext, channel, msg)
-    echo '"' .. a:plaintext ..'" - ' .. string(json_decode(a:msg).tokens)
-endfunction
-
-
-" Echos the token count of the entire buffer (or provided string)
-" Example usage :echo llama#tokenCount()
-func llama#tokenCount(...)
-    if (a:0 > 0)
-        let l:buflines = a:1
-    else
-        let l:buflines = getline(1,1000)
-        if l:buflines[0][0:1] == '!*'
-            let l:buflines = l:buflines[1:-1]
-        endif
-        let l:buflines = join(l:buflines, "\n")
-    endif
-    let l:querydata = {"content": l:buflines}
-    let l:curlcommand = copy(s:curlcommand)
-    let l:curlcommand[2] = json_encode(l:querydata)
-    let l:curlcommand[8] = g:llama_api_url .. "/tokenize"
-   let s:token_job = job_start(l:curlcommand, {"callback": "s:tokenCountCallback"})
-endfunction
-
-func s:tokenCountCallback(channel, msg)
-    let resp = json_decode(a:msg)
-    echo len(resp.tokens)
-endfunction
-
