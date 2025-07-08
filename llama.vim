@@ -192,10 +192,6 @@ func llama#doLlamaGen()
     call writefile(["==========", "\n"], "/tmp/llama-context", "a")
   endfor
 
-  " prompt
-  "call writefile(["use the files above for context", "always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Do not rewrite the whole file unless specifically asked. Focus on the block or function in question. Concisely comment your code."], "/tmp/llama-context", "a")
-
-
   " get current buffer
   let l:cbuffer = bufnr("%")
 
@@ -240,8 +236,9 @@ func llama#doLlamaGen()
       let l:failed = appendbufline(l:cbuffer, line('.'), '')
       "move cursor to after where it's gonna insert
       call cursor(line('.') + 1, 0)
-      let l:baseprompt = "Concisely comment your code. Match indentation of provided code. Do not wrap code blocks in code fences. Do not indicate language. Do not explain. Do not return more than one example. Return only the line, lines or function asked for in your response."
-      let l:querydata.prompt = join(["User:", l:selectedText, "Rewrite the code above and do the following:", l:buflines, l:baseprompt, "Assistant:"], "\n")
+      let l:baseprompt = "Rewrite the code sample above. Maintain and match the indentation of the sample. Do not return code fences. Do not return extra examples or explain outside of inline comments. Return only the text of the rewritten code and lines, functions, or blocks asked for as if you are entering them into a text editor, rewritten according to the following instructions:"
+      let l:querydata.prompt = join(["User:", l:selectedText, l:baseprompt, l:buflines, "Assistant:"], "\n")
+      stopinsert
 
     " in context buffer
     else
@@ -270,6 +267,7 @@ func llama#doLlamaGen()
         call cursor(line('.') + 4, 0)
         " set the prompt string
         let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
+        stopinsert
       endif
     endif
 
@@ -338,7 +336,7 @@ func llama#doLlamaGen()
     call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llama_api_key])
     call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
   endif
-  echo querydata.prompt
+  "echo querydata.prompt
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
 endfunction
