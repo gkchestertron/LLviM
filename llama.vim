@@ -237,28 +237,20 @@ func llama#doLlamaGen()
 
     " in context buffer
     else
-      let l:cur_line = getbufline(l:cbuffer, line('.'))
+      echo "sending up to current line for generation"
+      sleep 500m
+      
+      let l:failed = appendbufline(l:cbuffer, line('.'), ['', '', '', ''])
 
-
-      " line is not empty
-      else
-        echo "sending up to current line for generation"
-        sleep 500m
-        " add a line
-        let l:failed = appendbufline(l:cbuffer, line('.'), '')
-        let l:failed = appendbufline(l:cbuffer, line('.'), '')
-        let l:failed = appendbufline(l:cbuffer, line('.'), '')
-        let l:failed = appendbufline(l:cbuffer, line('.'), '')
-        " get all lines up to cursor
-        let l:buflines = join(getbufline(l:cbuffer, 1, line('.')), "\n")
-        " save the cursor position by the buffer name in the map
-        let s:linedict[l:cbuffer] = line('.') + 2
-        "move cursor to after where it's gonna insert
-        call cursor(line('.') + 4, 0)
-        " set the prompt string
-        let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
-        stopinsert
-      endif
+      " get all lines up to cursor
+      let l:buflines = join(getbufline(l:cbuffer, 1, line('.')), "\n")
+      " save the cursor position by the buffer name in the map
+      let s:linedict[l:cbuffer] = line('.') + 2
+      "move cursor to after where it's gonna insert
+      call cursor(line('.') + 4, 0)
+      " set the prompt string
+      let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
+      stopinsert
     endif
 
   " normal mode
@@ -284,7 +276,9 @@ func llama#doLlamaGen()
       let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code. Match indentation of provided code."
       let l:buflines = getbufline(l:cbuffer, 1, '$')
       let l:querydata.prompt = join(l:buflines, "\n")
-      let s:linedict[l:cbuffer] = line('$')
+      let s:linedict[l:cbuffer] = line('$') + 1
+      call appendbufline(l:cbuffer, line('$'), ['', '', ''])
+      call cursor(line('$'), 0)
       let l:querydata.prompt = join([context, "User:", l:baseprompt, l:querydata.prompt, "Assistant:\n"])
     endif
 
