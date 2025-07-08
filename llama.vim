@@ -35,74 +35,69 @@ const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a
 let s:linedict = {}
 
 " handle switching to and from context buffer
-function llama#openOrClosePromptBuffer()
-  let bufnr = bufnr("/tmp/llama-prompt")
+function! llama#openOrClosePromptBuffer()
   if bufname("%") == "/tmp/llama-prompt"
-    execute "w|hide"
+    execute "wq"
+
+  " Check if the buffer is already open and switch to it
+  elseif bufexists("/tmp/llama-prompt")
+    execute "bdelete /tmp/llama-prompt"
+    execute "vnew|e /tmp/llama-prompt"
   else
-    " Check if the buffer is already open and switch to it
-    if bufnr != -1
-      execute "w|bdelete " . bufnr
-    endif
     execute "vnew|e /tmp/llama-prompt"
   endif
 endfunction
 
 " put last given code block in default register
 function llama#extractLastCodeBlock(bufn)
-    execute "buffer " . a:bufn
-    execute "write"
+  " Define the path to the file
+  let l:file_path = '/tmp/llama-prompt'
 
-    " Define the path to the file
-    let l:file_path = '/tmp/llama-prompt'
+  " Read the file content
+  if !filereadable(l:file_path)
+      echo "File not found!"
+      return
+  endif
 
-    " Read the file content
-    if !filereadable(l:file_path)
-        echo "File not found!"
-        return
-    endif
+  let l:lines = readfile(l:file_path)
+  if empty(l:lines)
+      echo "File is empty!"
+      return
+  endif
 
-    let l:lines = readfile(l:file_path)
-    if empty(l:lines)
-        echo "File is empty!"
-        return
-    endif
+  " Initialize variables
+  let l:block_number = 1
+  let l:in_block = 0
+  let l:code_block = []
 
-    " Initialize variables
-    let l:block_number = 1
-    let l:in_block = 0
-    let l:code_block = []
-
-    " Loop through each line in the file
-    for l:line in l:lines
-      " Check for the start of a block
-      if l:line =~# '^\s*```'
-        if l:in_block
-          " End of a block
-          let l:in_block = 0
-          let l:block = join(l:code_block, "\n")
-          call setreg(string(l:block_number), l:block, 'l')
-          call setreg('"', l:block, 'l')
-          echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
-          let l:block_number += 1
-          let l:code_block = []
-        else
-          " Start of a block
-          let l:in_block = 1
-        endif
-      elseif l:in_block
-        " Add line to the current block
-        call add(l:code_block, l:line)
-      endif
-    endfor
-
-    " Capture the last block if any
-    if l:in_block
+  " Loop through each line in the file
+  for l:line in l:lines
+    " Check for the start of a block
+    if l:line =~# '^\s*```'
+      if l:in_block
+        " End of a block
+        let l:in_block = 0
         let l:block = join(l:code_block, "\n")
         call setreg(string(l:block_number), l:block, 'l')
         call setreg('"', l:block, 'l')
-        echo 'Block ' . l:block_number . ' captured in register ' . l:block_number
+        let l:block_number += 1
+        let l:code_block = []
+      else
+        " Start of a block
+        let l:in_block = 1
+      endif
+    elseif l:in_block
+      " Add line to the current block
+      call add(l:code_block, l:line)
     endif
+  endfor
+
+  " Capture the last block if any
+  if l:in_block
+      let l:block = join(l:code_block, "\n")
+      call setreg(string(l:block_number), l:block, 'l')
+      call setreg('"', l:block, 'l')
+  endif
 endfunction
 
 " save selected lines for context
@@ -115,6 +110,7 @@ function! llama#saveHighlightedText()
   let selected_text = getreg('"')
 
   call llama#openOrClosePromptBuffer()
+  execute '%d'
 
   " Place the text in the default register
   call setreg('"', selected_text, 'l')
@@ -128,8 +124,6 @@ function! llama#saveHighlightedText()
     call append(line('$'), line)
   endfor
   call append(line('$'), "```")
-
-  echo "Text saved and appended to buffer: " . buffer_name
 endfunction
 
 " handle data coming back from the model
@@ -158,7 +152,6 @@ func s:callbackHandler(bufn, channel, msg)
     echo "Finished generation"
   endif
 endfunction
-
 
 func llama#doLlamaGen()
   " stop running completion task if it exists
@@ -228,11 +221,15 @@ func llama#doLlamaGen()
       " save cursor position for gen
       let s:linedict[l:cbuffer] = line('.')
       " set the prompt string
-      let l:failed = appendbufline(l:cbuffer, line('.'), '')
+      if line('.') == line('$')
+        let l:failed = appendbufline(l:cbuffer, line('.'), '')
+      endif
       "move cursor to after where it's gonna insert
       call cursor(line('.') + 1, 0)
-      let l:baseprompt = "Rewrite the code sample above. Maintain and match the indentation of the sample. Do not return code fences. Do not return extra examples or explain outside of inline comments. Return only the text of the rewritten code and lines, functions, or blocks asked for as if you are entering them into a text editor, rewritten according to the following instructions:"
-      let l:querydata.prompt = join(["User:", l:selectedText, l:baseprompt, l:buflines, "Assistant:"], "\n")
+      let stx = &syntax
+      let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
+      let l:postprompt = "Return just the raw code as if you were typing it into a text editor. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample. Do not output code fence lines (e.g. ```)"
+      let l:querydata.prompt = join(["User:", l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
       stopinsert
 
     " in context buffer
@@ -258,7 +255,6 @@ func llama#doLlamaGen()
 
     " in file - copy any previously selected text to buffer and open it
     if bufname("%") != "/tmp/llama-prompt"
-      echo "loading selection into context buffer"
       call llama#saveHighlightedText()
       " get current buffer
       let l:cbuffer = bufnr("%")
@@ -270,15 +266,25 @@ func llama#doLlamaGen()
 
     " in context buffer - send whole buffer and all open files
     else
+      " Send all files and buffer for generation
+      " Sleep for 500 milliseconds
       echo "sending all files and buffer for generation"
       sleep 500m
+      " Read the context from the file /tmp/llama-context
       let context = join(readfile("/tmp/llama-context"), "\n")
-      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code. Match indentation of provided code."
+      " Define the base prompt for the conversation
+      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
+      " Get all lines from the current buffer
       let l:buflines = getbufline(l:cbuffer, 1, '$')
+      " Join the buffer lines into a single string
       let l:querydata.prompt = join(l:buflines, "\n")
+      " Store the number of lines in the buffer
       let s:linedict[l:cbuffer] = line('$') + 1
+      " Append three empty lines to the buffer
       call appendbufline(l:cbuffer, line('$'), ['', '', ''])
+      " Move the cursor to the end of the buffer
       call cursor(line('$'), 0)
+      " Combine the context, user prompt, base prompt, and buffer content into the final prompt
       let l:querydata.prompt = join([context, "User:", l:baseprompt, l:querydata.prompt, "Assistant:\n"])
     endif
 
@@ -289,9 +295,6 @@ func llama#doLlamaGen()
 
     " in file - send selection to buffer
     if bufname("%") != "/tmp/llama-prompt"
-      echo "loading selection into context buffer"
-      sleep 500m
-
       call llama#saveHighlightedText()
       " get current buffer
       let l:cbuffer = bufnr("%")
@@ -303,13 +306,22 @@ func llama#doLlamaGen()
 
     " in buffer - just send selection
     else
+      " Display a message indicating that the selection is being sent for generation
       echo "sending selection for generation"
+      " Sleep for 500 milliseconds (m is the millisecond suffix in Vim)
       sleep 500m
+      " Get the position of the end of the selected text
+      " getpos("'>")[1:2] returns the line and column number of the end of the selection
       let [l:line_end, l:column_end] = getpos("'>")[1:2]
+      " Set the prompt in the querydata dictionary to the selected text
       let l:querydata.prompt = l:selectedText
+      " Append an empty line to the current buffer at the end of the selected text
       let l:failed = appendbufline(l:cbuffer, l:line_end, '')
+      " Update the line dictionary with the new line number for the current buffer
       let s:linedict[l:cbuffer] = l:line_end + 1
+      " Clear the register 'a'
       call setreg("a", "")
+      " Join the user prompt and the assistant response into a single string
       let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
     endif
   endif
