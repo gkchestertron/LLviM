@@ -38,3 +38,31 @@ The plugin operates by calling the llama server with the context you provide via
 - in `insert` mode, will send the buffer up to and including the current line for generation.
 - in `visual` mode, will send just the selected text for generation.
 - in `normal` mode, will send the entire context buffer and all open files for generation. 
+
+### Overriding LLM Settings
+(From original llama.cpp example script)
+`g:llama_api_url`, `g:llama_api_key` and `g:llama_overrides` can be configured in your .vimrc:
+```vim
+let g:llama_api_url = "192.168.1.10:9000"
+```
+
+`llama_overrides` can also be set through buffer/window scopes. For instance:
+```vim
+autocmd filetype python let `b:llama_overrides` = {"temp": 0.2}
+```
+Could be added to your .vimrc to automatically set a lower temperature when editing a python script.
+
+
+Additionally, an override dict can be stored at the top of a file:
+```vim
+!*{"stop": ["User:"]}
+```
+Could be added to the start of your chatlog.txt to set the stopping token.
+These parameter dicts are merged together from lowest to highest priority:
+server default -> `g:llama_overrides` -> `w:llama_overrides` -> `b:llama_overrides` -> in file (!*) overrides
+
+Sublists (like `logit_bias` and stop) are overridden, not merged
+Example override:
+```vim
+!*{"logit_bias": [[13, -5], [2, false]], "temperature": 1, "top_k": 5, "top_p": 0.5, "n_predict": 256, "repeat_last_n": 256, "repeat_penalty": 1.17647}
+```

@@ -1,28 +1,4 @@
-" Requires an already running llama.cpp server
-" To install either copy or symlink to ~/.vim/autoload/llama.vim
-" Then start with either :call llama#doLlamaGen(),
-
-" or add a keybind to your vimrc such as
-" nnoremap Z :call llama#doLlamaGen()<CR>
-" Similarly, you could add an insert mode keybind with
-" inoremap <C-B> <Cmd>call llama#doLlamaGen()<CR>
-"
-" g:llama_api_url, g:llama_api_key and g:llama_overrides can be configured in your .vimrc
-" let g:llama_api_url = "192.168.1.10:8080"
-" llama_overrides can also be set through buffer/window scopes. For instance
-" autocmd filetype python let b:llama_overrides = {"temp": 0.2}
-" Could be added to your .vimrc to automatically set a lower temperature when
-" editing a python script
-" Additionally, an override dict can be stored at the top of a file
-" !*{"stop": ["User:"]}
-" Could be added to the start of your chatlog.txt to set the stopping token
-" These parameter dicts are merged together from lowest to highest priority:
-" server default -> g:llama_overrides -> w:llama_overrides ->
-" b:llama_overrides -> in file (!*) overrides
-"
-" Sublists (like logit_bias and stop) are overridden, not merged
-" Example override:
-" !*{"logit_bias": [[13, -5], [2, false]], "temperature": 1, "top_k": 5, "top_p": 0.5, "n_predict": 256, "repeat_last_n": 256, "repeat_penalty": 1.17647}
+" get setting overrides
 if !exists("g:llama_api_url")
     let g:llama_api_url= "127.0.0.1:8080"
 endif
@@ -31,7 +7,7 @@ if !exists("g:llama_overrides")
 endif
 "const s:querydata = {"n_predict": 256, "stop": [ "\n" ], "stream": v:true }
 const s:querydata = {"n_predict": -1, "stream": v:true }
-const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistent.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url, '--header', "Content-Type: application/json"]
+const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistant.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
 
 " handle switching to and from context buffer
