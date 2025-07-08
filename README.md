@@ -1,5 +1,5 @@
 # LLviM
-LLM Plugin for VIM because I'm old but want to try new things, using llama.cpp and some ugly vimscript.
+Local LLM Plugin for VIM because I'm old but want to try new things, using **llama.cpp** and some ugly vimscript.
 (Heavily copied from an old example provided in the llama.cpp repo).
 
 ## Setup
