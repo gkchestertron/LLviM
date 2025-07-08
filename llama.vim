@@ -41,6 +41,7 @@ function! llama#openOrClosePromptBuffer()
 
   " Check if the buffer is already open and switch to it
   elseif bufexists("/tmp/llama-prompt")
+    execute "vnew|e /tmp/llama-prompt|wq"
     execute "bdelete /tmp/llama-prompt"
     execute "vnew|e /tmp/llama-prompt"
   else
@@ -76,11 +77,16 @@ function llama#extractLastCodeBlock(bufn)
     if l:line =~# '^\s*```'
       if l:in_block
         " End of a block
-        let l:in_block = 0
+         let l:in_block = 0
+        " Initialize l:block with the joined lines of l:code_block
         let l:block = join(l:code_block, "\n")
+        " Set the register for the current block number with the block content
         call setreg(string(l:block_number), l:block, 'l')
+        " Set the register for the default register (") with the block content
         call setreg('"', l:block, 'l')
+        " Increment the block number
         let l:block_number += 1
+        " Clear l:code_block for the next set of code
         let l:code_block = []
       else
         " Start of a block
@@ -138,13 +144,20 @@ func s:callbackHandler(bufn, channel, msg)
   endif
   let l:decoded_msg = json_decode(l:msg)
   let l:newtext = split(l:decoded_msg['content'], "\n", 1)
+  " Check if there is any text to process
   if len(l:newtext) > 0
+    " append the first line of the new text to the current line in the buffer
     call setbufline(l:bufn, s:linedict[l:bufn], getbufline(l:bufn, s:linedict[l:bufn])[0] .. newtext[0])
   else
     echo "nothing genned"
   endif
+
+  " If there's more than one line of new text,
   if len(l:newtext) > 1
-    let l:failed = appendbufline(l:bufn, s:linedict[l:bufn], newtext[1:-1])
+    for l:line in newtext[1:-1]
+      let l:result = appendbufline(l:bufn, s:linedict[l:bufn], l:line)
+    endfor
+    " Update the line dictionary to reflect the new lines added
     let s:linedict[l:bufn] = s:linedict[l:bufn] + len(newtext)-1
   endif
   if has_key(l:decoded_msg, "stop") && l:decoded_msg.stop
@@ -209,6 +222,7 @@ func llama#doLlamaGen()
 
     " in file
     if bufname("%") != "/tmp/llama-prompt"
+      stopinsert
       echo "sending last copied text and current line for generation"
       sleep 500m
 
@@ -220,20 +234,14 @@ func llama#doLlamaGen()
       call setbufline(l:cbuffer, line('.'), "")
       " save cursor position for gen
       let s:linedict[l:cbuffer] = line('.')
-      " set the prompt string
-      if line('.') == line('$')
-        let l:failed = appendbufline(l:cbuffer, line('.'), '')
-      endif
-      "move cursor to after where it's gonna insert
-      call cursor(line('.') + 1, 0)
       let stx = &syntax
       let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
-      let l:postprompt = "Return just the raw code as if you were typing it into a text editor. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample. Do not output code fence lines (e.g. ```)"
+      let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
       let l:querydata.prompt = join(["User:", l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
-      stopinsert
 
     " in context buffer
     else
+      stopinsert
       echo "sending up to current line for generation"
       sleep 500m
       
@@ -247,7 +255,6 @@ func llama#doLlamaGen()
       call cursor(line('.') + 4, 0)
       " set the prompt string
       let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
-      stopinsert
     endif
 
   " normal mode
@@ -332,6 +339,7 @@ func llama#doLlamaGen()
     call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llama_api_key])
     call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
   endif
+
   "echo querydata.prompt
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
