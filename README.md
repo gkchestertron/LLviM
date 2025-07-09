@@ -1,6 +1,7 @@
 # LLviM
 Local LLM Plugin for VIM because I'm old but want to try new things, using **llama.cpp** and some ugly vimscript.
-(Heavily copied from an old example provided in the llama.cpp repo).
+(Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).
+(Also, intentionally does not conflict with **llama.vim**
 
 ## Setup
 1. Install, build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project), and run your favorite model (deepseek-coder is pretty cool).
@@ -18,6 +19,11 @@ nnoremap <C-B> <Cmd>call llvim#openOrClosePromptBuffer()<CR>
 "visual mode
 vnoremap <C-K> <Cmd>call llvim#doLlamaGen()<CR>
 ```
+
+### Compatible Models
+- [deepseek-coder](https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct)
+- [ggml-org's quantized Qwen models](https://huggingface.co/collections/ggml-org/llamavim-6720fece33898ac10544ecf9)
+  - these work great for both **llama.vim** and **LLviM**
 
 ## Usage
 First, you must have a running llama server. It can be local or remote, just set an accurate url in the `g:llvim_api_url` var in your `~/.vimrc`.
