@@ -1,9 +1,11 @@
 # LLviM
-Local LLM Plugin for VIM, for a conversational coding workflow.
+Local LLM Plugin for for a conversational coding workflow in VIM.
 
 (Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).)
 
 (Also, intentionally does not conflict with **llama.vim**.)
+
+![file insert demo](static/file-insert.gif)
 
 ## Setup
 1. Install, build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project), and run your favorite model (deepseek-coder is pretty cool).
@@ -27,6 +29,7 @@ vnoremap <C-K> <Cmd>call llvim#doLlamaGen()<CR>
 
 ### Compatible Models
 - [deepseek-coder](https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct)
+    - this surprisingly works well with **llama.vim**
 - [ggml-org's quantized Qwen models](https://huggingface.co/collections/ggml-org/llamavim-6720fece33898ac10544ecf9)
   - these work great for both **llama.vim** and **LLviM**
 
@@ -49,6 +52,8 @@ The plugin operates by calling the llama server with the context you provide via
 - in `insert` mode, will send the buffer up to and including the current line for generation.
 - in `visual` mode, will send just the selected text for generation.
 - in `normal` mode, will send the entire context buffer and all open files for generation. 
+
+After every generation in the context buffer, all code blocks will be placed in the numbered regsitered in the order they appear in the buffer, and the last code block will also be placed in the default register.
 
 ### Overriding LLM Settings
 (From original llama.cpp example script)
