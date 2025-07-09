@@ -1,11 +1,14 @@
 # LLviM
 Local LLM Plugin for for a conversational coding workflow in VIM.
 
-(Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).)
-
-(Also, intentionally does not conflict with **llama.vim**.)
-
+## Features
+- Rewrite code blocks with instructions:
 ![file insert demo](static/file-insert.gif)
+- Chat in dedicated window that automatically copies generated code blocks into default and numbered registers:
+- ![buffer register demo](static/buffer-registers.gif)
+
+Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).
+(Also, intentionally does not conflict with **llama.vim**.)
 
 ## Setup
 1. Install, build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project), and run your favorite model (deepseek-coder is pretty cool).
