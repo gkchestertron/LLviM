@@ -2,6 +2,8 @@
 Local LLM Plugin for for a conversational coding workflow in VIM.
 
 ## Features
+All demos at 2x speed.
+
 - Rewrite code blocks with instructions:
 ![file insert demo](static/file-insert.gif)
 - Chat in dedicated window that automatically copies generated code blocks into default and numbered registers:
