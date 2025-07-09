@@ -1,15 +1,20 @@
 # LLviM
-Local LLM Plugin for VIM because I'm old but want to try new things, using **llama.cpp** and some ugly vimscript.
+Local LLM Plugin for VIM, for a conversational coding workflow.
+
 (Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).)
+
 (Also, intentionally does not conflict with **llama.vim**.)
 
 ## Setup
 1. Install, build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project), and run your favorite model (deepseek-coder is pretty cool).
+  - can also use remote servers providing a compliant API.
 2. Copy the llvim.vim file from this repo to `~/.vim/autoload/`
 3. Copy the keybindings and variable below into your `~/.vimrc`
 ```vim
 " llama
 let g:llvim_api_url= "127.0.0.1:8080/completion"
+" if you're using a remote server with authentication
+let g:llvim_api_key= ""
 autocmd BufWinEnter /tmp/llvim-prompt set syntax=markdown
 " insert mode
 inoremap <C-K> <Cmd>call llvim#doLlamaGen()<CR>

@@ -22,11 +22,11 @@ function! llvim#openOrClosePromptBuffer()
     " if it's hidden, make a new split and unhide it
     if len(win_findbuf(l:bufn)) == 0
       execute "vnew"
-      execute "b" . l:bufn
+      execute "b " . l:bufn
 
-    " already open, don't make more of them
+    " already open, jump to it
     else
-      return
+      execute "wincmd w" . "|wincmd" . bufwinnr(l:bufn)
     endif
 
   " no buffer, let's make one
@@ -38,20 +38,7 @@ endfunction
 " put last given code block in default register
 function llvim#extractLastCodeBlock(bufn)
   " Define the path to the file
-  let l:file_path = '/tmp/llvim-prompt'
-
-  " Read the file content
-  if !filereadable(l:file_path)
-      echo "File not found!"
-      return
-  endif
-
-  " file empty, do nothing
-  let l:lines = readfile(l:file_path)
-  if empty(l:lines)
-      echo "File is empty!"
-      return
-  endif
+  let l:lines = getbufline(bufnr('/tmp/llvim-prompt'), 1, '$')
 
   " Initialize variables
   let l:block_number = 1
@@ -61,14 +48,13 @@ function llvim#extractLastCodeBlock(bufn)
   " Loop through each line in the file and capture the code blocks
   for l:line in l:lines
     " Check for the start or end of a block
-    if l:line =~# '^\s*```'
-
+    if l:line =~# '^```'
       " at the end of a block - join all the lines and put in a register
       if l:in_block
         let l:in_block = 0
         let l:block = join(l:code_block, "\n")
-        call setreg(string(l:block_number), l:block, 'l')
-        call setreg('"', l:block, 'l')
+        call setreg(l:block_number, l:block)
+        call setreg('"', l:block)
         let l:block_number += 1
         let l:code_block = []
 
@@ -85,9 +71,9 @@ function llvim#extractLastCodeBlock(bufn)
 
   " Capture the last block if any
   if l:in_block
+      echo 'copying block'
       let l:block = join(l:code_block, "\n")
-      call setreg(string(l:block_number), l:block, 'l')
-      call setreg('"', l:block, 'l')
+      call setreg('"', l:block)
   endif
 endfunction
 
@@ -126,16 +112,11 @@ func s:callbackHandler(bufn, channel, msg)
     return
   endif
 
-  " skip empty messages
+  " skip empty messages and unnest if under 'data: '
   if len(a:msg) < 3
     return
-
-  " skip 'data: ' at the beginning of the message to unnest data
   elseif a:msg[0] == "d"
-    echo a:msg
     let l:msg = a:msg[6:-1]
-    
-  " message is not nested
   else
     let l:msg = a:msg
   endif
@@ -145,16 +126,24 @@ func s:callbackHandler(bufn, channel, msg)
   let l:newtext = split(l:decoded_msg['content'], "\n", 1)
 
   " append the first line of message to the starting line in the file or buffer
+  " strip code fences and empty first line if in file
   if len(l:newtext) > 0
+    if bufname(l:bufn) != "/tmp/llvim-prompt" && l:newtext[0] =~# '^```'
+      return
+    endif
     call setbufline(l:bufn, s:linedict[l:bufn], getbufline(l:bufn, s:linedict[l:bufn])[0] .. newtext[0])
   else
     echo "nothing genned"
   endif
 
   " Append subsequent lines to the file or buffer after the starting line
+  " strip code fences if in file
   " and update the line pointer for the next line
   if len(l:newtext) > 1
     for l:line in newtext[1:-1]
+      if bufname(l:bufn) != "/tmp/llvim-prompt" && l:line =~# '^```'
+        return
+      endif
       let l:result = appendbufline(l:bufn, s:linedict[l:bufn], l:line)
     endfor
     let s:linedict[l:bufn] = s:linedict[l:bufn] + len(newtext)-1
@@ -176,6 +165,10 @@ func llvim#doLlamaGen()
       return
     endif
   endif
+
+  " get current buffer and line
+  let l:cbuffer = bufnr("%")
+  let l:buflines = getbufline(l:cbuffer, line("."))
 
   " overwrite temp context file with all open files
   call writefile([""], "/tmp/llvim-context")
