@@ -268,7 +268,7 @@ func llvim#doLlamaGen()
       let context = join(readfile("/tmp/llvim-context"), "\n")
       let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
       let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
-      let l:querydata.prompt = join(["User:", context, l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
+      let l:querydata.prompt = join(["User:", context, l:selectedText, l:baseprompt, "=========", l:buflines, "=========", l:postprompt, "Assistant:"], "\n")
 
     " in context buffer - send whole buffer and all open files
     else
@@ -279,7 +279,7 @@ func llvim#doLlamaGen()
       let context = join(readfile("/tmp/llvim-context"), "\n")
       let l:buflines = getbufline(l:cbuffer, 1, '$')
       let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
-      let l:querydata.prompt = join(["User:", context, l:baseprompt, join(l:buflines, "\n"), "Assistant:\n"])
+      let l:querydata.prompt = join(["User:", context, "=========", l:baseprompt, "=========", join(l:buflines, "\n"), "Assistant:\n"])
 
       " Store the line number for callback
       let s:linedict[l:cbuffer] = line('$') + 1
