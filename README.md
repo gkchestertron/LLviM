@@ -5,7 +5,14 @@ Local LLM Plugin for for a conversational coding workflow in VIM.
 - Rewrite code blocks with instructions:
 ![file insert demo](static/file-insert.gif)
 - Chat in dedicated window that automatically copies generated code blocks into default and numbered registers:
-- ![buffer register demo](static/buffer-registers.gif)
+![buffer register demo](static/buffer-registers.gif)
+- Control context by selecting text or executing in normal mode (to send all open files).
+![buffer context demo](static/buffer-context.gif)
+(Also had **llama.vim** running during this demo)
+
+### Warning
+Editing the buffer while generation is happening can cause unexpected behavior and crash vim. Open to suggestions on fixing this - the buffer must be modifiable to stream the generated results to it.
+Also, only one vim session can be open at a time or the context buffers will collide. I'll fix this sooner than later.
 
 Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).
 (Also, intentionally does not conflict with **llama.vim**.)
@@ -16,7 +23,7 @@ Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/lla
 2. Copy the llvim.vim file from this repo to `~/.vim/autoload/`
 3. Copy the keybindings and variable below into your `~/.vimrc`
 ```vim
-" llama
+" llm endpoint - update if you're running on a different port or using a remote server
 let g:llvim_api_url= "127.0.0.1:8080/completion"
 " if you're using a remote server with authentication
 let g:llvim_api_key= ""
