@@ -1,7 +1,7 @@
 # LLviM
 Local LLM Plugin for VIM because I'm old but want to try new things, using **llama.cpp** and some ugly vimscript.
-(Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).
-(Also, intentionally does not conflict with **llama.vim**
+(Heavily copied from the precursor to [llama.vim](https://github.com/ggml-org/llama.vim).)
+(Also, intentionally does not conflict with **llama.vim**.)
 
 ## Setup
 1. Install, build [llama.cpp](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#building-the-project), and run your favorite model (deepseek-coder is pretty cool).
