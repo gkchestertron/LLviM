@@ -1,34 +1,44 @@
 " get setting overrides
-if !exists("g:llama_api_url")
-    let g:llama_api_url= "127.0.0.1:8080"
+if !exists("g:llvim_api_url")
+    let g:llvim_api_url= "127.0.0.1:8080/completion"
 endif
-if !exists("g:llama_overrides")
-   let g:llama_overrides = {}
+if !exists("g:llvim_overrides")
+   let g:llvim_overrides = {}
 endif
-"const s:querydata = {"n_predict": 256, "stop": [ "\n" ], "stream": v:true }
 const s:querydata = {"n_predict": -1, "stream": v:true }
-const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistant.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llama_api_url, '--header', "Content-Type: application/json"]
+const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistant.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llvim_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
 
 " handle switching to and from context buffer
-function! llama#openOrClosePromptBuffer()
-  if bufname("%") == "/tmp/llama-prompt"
-    execute "wq"
+function! llvim#openOrClosePromptBuffer()
+  " hide the buffer if we're in it
+  if bufname("%") == "/tmp/llvim-prompt"
+    execute "w|hide"
 
   " Check if the buffer is already open and switch to it
-  elseif bufexists("/tmp/llama-prompt")
-    execute "vnew|e /tmp/llama-prompt|wq"
-    execute "bdelete /tmp/llama-prompt"
-    execute "vnew|e /tmp/llama-prompt"
+  elseif bufexists("/tmp/llvim-prompt")
+    let l:bufn = bufnr("/tmp/llvim-prompt")
+
+    " if it's hidden, make a new split and unhide it
+    if len(win_findbuf(l:bufn)) == 0
+      execute "vnew"
+      execute "b" . l:bufn
+
+    " already open, don't make more of them
+    else
+      return
+    endif
+
+  " no buffer, let's make one
   else
-    execute "vnew|e /tmp/llama-prompt"
+    execute "vnew|e /tmp/llvim-prompt"
   endif
 endfunction
 
 " put last given code block in default register
-function llama#extractLastCodeBlock(bufn)
+function llvim#extractLastCodeBlock(bufn)
   " Define the path to the file
-  let l:file_path = '/tmp/llama-prompt'
+  let l:file_path = '/tmp/llvim-prompt'
 
   " Read the file content
   if !filereadable(l:file_path)
@@ -36,6 +46,7 @@ function llama#extractLastCodeBlock(bufn)
       return
   endif
 
+  " file empty, do nothing
   let l:lines = readfile(l:file_path)
   if empty(l:lines)
       echo "File is empty!"
@@ -47,29 +58,27 @@ function llama#extractLastCodeBlock(bufn)
   let l:in_block = 0
   let l:code_block = []
 
-  " Loop through each line in the file
+  " Loop through each line in the file and capture the code blocks
   for l:line in l:lines
-    " Check for the start of a block
+    " Check for the start or end of a block
     if l:line =~# '^\s*```'
+
+      " at the end of a block - join all the lines and put in a register
       if l:in_block
-        " End of a block
-         let l:in_block = 0
-        " Initialize l:block with the joined lines of l:code_block
+        let l:in_block = 0
         let l:block = join(l:code_block, "\n")
-        " Set the register for the current block number with the block content
         call setreg(string(l:block_number), l:block, 'l')
-        " Set the register for the default register (") with the block content
         call setreg('"', l:block, 'l')
-        " Increment the block number
         let l:block_number += 1
-        " Clear l:code_block for the next set of code
         let l:code_block = []
+
+      " starting a block
       else
-        " Start of a block
         let l:in_block = 1
       endif
+
+    " in a block - capture the line
     elseif l:in_block
-      " Add line to the current block
       call add(l:code_block, l:line)
     endif
   endfor
@@ -82,23 +91,18 @@ function llama#extractLastCodeBlock(bufn)
   endif
 endfunction
 
-" save selected lines for context
-function! llama#saveHighlightedText()
-  let buffer_name = "/tmp/llama-prompt"
-
-  " Get the selected text
-  "execute 'normal "+Y'
+" save selected lines for context - only called from file, not context buffer
+function! llvim#saveHighlightedText()
+  " get syntax and selected text
   let stx = &syntax
   let selected_text = getreg('"')
 
-  call llama#openOrClosePromptBuffer()
-  execute '%d'
-
-  " Place the text in the default register
-  call setreg('"', selected_text, 'l')
-
   " Split selected_text into lines
   let lines = split(selected_text, '\n')
+
+  " open and clear the buffer
+  call llvim#openOrClosePromptBuffer()
+  execute '%d'
 
   " Append each line with proper line breaks and code fence
   call append(line('$'), "```" . stx)
@@ -111,38 +115,60 @@ endfunction
 " handle data coming back from the model
 func s:callbackHandler(bufn, channel, msg)
   let l:bufn = a:bufn
+
+  " stop job and return if the buffer we're writing to went away
+  if len(win_findbuf(l:bufn)) == 0
+    if exists("b:job")
+      if job_status(b:job) == "run"
+        call job_stop(b:job)
+      endif
+    endif
+    return
+  endif
+
+  " skip empty messages
   if len(a:msg) < 3
     return
+
+  " skip 'data: ' at the beginning of the message to unnest data
   elseif a:msg[0] == "d"
+    echo a:msg
     let l:msg = a:msg[6:-1]
+    
+  " message is not nested
   else
     let l:msg = a:msg
   endif
+
+  " decode message and split into lines
   let l:decoded_msg = json_decode(l:msg)
   let l:newtext = split(l:decoded_msg['content'], "\n", 1)
-  " Check if there is any text to process
+
+  " append the first line of message to the starting line in the file or buffer
   if len(l:newtext) > 0
-    " append the first line of the new text to the current line in the buffer
     call setbufline(l:bufn, s:linedict[l:bufn], getbufline(l:bufn, s:linedict[l:bufn])[0] .. newtext[0])
   else
     echo "nothing genned"
   endif
 
-  " If there's more than one line of new text,
+  " Append subsequent lines to the file or buffer after the starting line
+  " and update the line pointer for the next line
   if len(l:newtext) > 1
     for l:line in newtext[1:-1]
       let l:result = appendbufline(l:bufn, s:linedict[l:bufn], l:line)
     endfor
-    " Update the line dictionary to reflect the new lines added
     let s:linedict[l:bufn] = s:linedict[l:bufn] + len(newtext)-1
   endif
+
+  " done
   if has_key(l:decoded_msg, "stop") && l:decoded_msg.stop
-    call llama#extractLastCodeBlock(a:bufn)
+    call llvim#extractLastCodeBlock(a:bufn)
     echo "Finished generation"
   endif
 endfunction
 
-func llama#doLlamaGen()
+" build context based on, uh... context and send to model for generation
+func llvim#doLlamaGen()
   " stop running completion task if it exists
   if exists("b:job")
     if job_status(b:job) == "run"
@@ -151,41 +177,27 @@ func llama#doLlamaGen()
     endif
   endif
 
-  " get the current mode
-  let current_mode = mode()
-
-  " clear the context file
-  call writefile([""], "/tmp/llama-context")
-
-  " copy open files into context
+  " overwrite temp context file with all open files
+  call writefile([""], "/tmp/llvim-context")
   for buf in filter(getbufinfo({'bufloaded':1}), {v -> len(v:val['windows'])})
     let filename = buf.name
-    if !filereadable(filename) || filename == "/tmp/llama-prompt" || filename == "/private/tmp/llama-prompt"
+    if !filereadable(filename) || filename == "/tmp/llvim-prompt" || filename == "/private/tmp/llvim-prompt"
       continue
     endif
     let lines = readfile(filename)
-    call writefile([filename, "==========", "\n"], "/tmp/llama-context", "a")
-    call writefile(lines, "/tmp/llama-context", "a")
-    call writefile(["==========", "\n"], "/tmp/llama-context", "a")
+    call writefile([filename, "==========", "\n"], "/tmp/llvim-context", "a")
+    call writefile(lines, "/tmp/llvim-context", "a")
+    call writefile(["==========", "\n"], "/tmp/llvim-context", "a")
   endfor
-
-  " get current buffer
-  let l:cbuffer = bufnr("%")
-
-  " get number of last line in buffer and save in the line/buffer map
-  let s:linedict[l:cbuffer] = line('$')
-
-  " gets the current line
-  let l:buflines = getbufline(l:cbuffer, line("."))
 
   " handle overriding settings
   let l:querydata = copy(s:querydata)
-  call extend(l:querydata, g:llama_overrides)
-  if exists("w:llama_overrides")
-    call extend(l:querydata, w:llama_overrides)
+  call extend(l:querydata, g:llvim_overrides)
+  if exists("w:llvim_overrides")
+    call extend(l:querydata, w:llvim_overrides)
   endif
-  if exists("b:llama_overrides")
-    call extend(l:querydata, b:llama_overrides)
+  if exists("b:llvim_overrides")
+    call extend(l:querydata, b:llvim_overrides)
   endif
   if l:buflines[0][0:1] == '!*'
     let l:userdata = json_decode(l:buflines[0][2:-1])
@@ -196,39 +208,46 @@ func llama#doLlamaGen()
   " insert mode
   if mode() ==# "i"
 
-    " in file
-    if bufname("%") != "/tmp/llama-prompt"
+    " in file - send default register and current line
+    if bufname("%") != "/tmp/llvim-prompt"
       stopinsert
-      echo "sending last copied text and current line for generation"
+      echo "sending default register and current line for generation"
       sleep 500m
 
-      " get default register
+      " get default register, syntax, and current line
       let l:selectedText = getreg('"')
-      " get current line
       let l:buflines = join(getbufline(l:cbuffer, line('.')), "\n")
-      " save the cursor position by the buffer name in the map
-      call setbufline(l:cbuffer, line('.'), "")
-      " save cursor position for gen
-      let s:linedict[l:cbuffer] = line('.')
       let stx = &syntax
+
+      " clear current line
+      call setbufline(l:cbuffer, line('.'), "")
+
+      " save line number for callback
+      let s:linedict[l:cbuffer] = line('.')
+
+      " build up and set context for generation
       let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
       let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
       let l:querydata.prompt = join(["User:", l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
 
-    " in context buffer
+    " in context buffer - send up to current line
     else
       stopinsert
       echo "sending up to current line for generation"
       sleep 500m
       
+      " add empty lines, so we have line breaks between user and assistant
       let l:failed = appendbufline(l:cbuffer, line('.'), ['', '', '', ''])
 
       " get all lines up to cursor
       let l:buflines = join(getbufline(l:cbuffer, 1, line('.')), "\n")
-      " save the cursor position by the buffer name in the map
+
+      " save the line number for callback
       let s:linedict[l:cbuffer] = line('.') + 2
-      "move cursor to after where it's gonna insert
+
+      "move cursor to after where it's gonna insert, so we get to watch it stream in
       call cursor(line('.') + 4, 0)
+
       " set the prompt string
       let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
     endif
@@ -236,60 +255,57 @@ func llama#doLlamaGen()
   " normal mode
   elseif mode() ==# "n"
 
-    " in file - copy any previously selected text to buffer and open it
-    if bufname("%") != "/tmp/llama-prompt"
+    " in file - send default register, current line, and all open files
+    if bufname("%") != "/tmp/llvim-prompt"
       echo "sending current line, default register, and all open files for generation"
       sleep 500m
 
-      " get default register
+      " get default register and current line
       let l:selectedText = getreg('"')
-      " get current line
       let l:buflines = join(getbufline(l:cbuffer, line('.')), "\n")
-      " save the cursor position by the buffer name in the map
+
+      " clear current line
       call setbufline(l:cbuffer, line('.'), "")
-      " save cursor position for gen
+
+      " save the line number for callback
       let s:linedict[l:cbuffer] = line('.')
+
+      " build and set context
       let stx = &syntax
-      let context = join(readfile("/tmp/llama-context"), "\n")
+      let context = join(readfile("/tmp/llvim-context"), "\n")
       let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
       let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
       let l:querydata.prompt = join(["User:", context, l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
 
     " in context buffer - send whole buffer and all open files
     else
-      " Send all files and buffer for generation
-      " Sleep for 500 milliseconds
       echo "sending all files and buffer for generation"
       sleep 500m
-      " Read the context from the file /tmp/llama-context
-      let context = join(readfile("/tmp/llama-context"), "\n")
-      " Define the base prompt for the conversation
-      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
-      " Get all lines from the current buffer
+
+      " build and set the context for generation
+      let context = join(readfile("/tmp/llvim-context"), "\n")
       let l:buflines = getbufline(l:cbuffer, 1, '$')
-      " Join the buffer lines into a single string
-      let l:querydata.prompt = join(l:buflines, "\n")
-      " Store the number of lines in the buffer
+      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
+      let l:querydata.prompt = join(["User:", context, l:baseprompt, join(l:buflines, "\n"), "Assistant:\n"])
+
+      " Store the line number for callback
       let s:linedict[l:cbuffer] = line('$') + 1
-      " Append three empty lines to the buffer
+
+      " add lines and move cursor so we can watch it stream
       call appendbufline(l:cbuffer, line('$'), ['', '', ''])
-      " Move the cursor to the end of the buffer
       call cursor(line('$'), 0)
-      " Combine the context, user prompt, base prompt, and buffer content into the final prompt
-      let l:querydata.prompt = join(["User:", context, l:baseprompt, l:querydata.prompt, "Assistant:\n"])
     endif
 
   " visual mode 
   else
+    " yank currently selected lines
     execute 'normal "aY'
     let l:selectedText = getreg("a")
 
-    " in file - send selection to buffer
-    if bufname("%") != "/tmp/llama-prompt"
-      call llama#saveHighlightedText()
-      " get current buffer
+    " in file - clear buffer and paste in selected lines
+    if bufname("%") != "/tmp/llvim-prompt"
+      call llvim#saveHighlightedText()
       let l:cbuffer = bufnr("%")
-      " add a line
       let l:failed = appendbufline(l:cbuffer, line('$'), '')
       normal! G$
       startinsert
@@ -297,33 +313,30 @@ func llama#doLlamaGen()
 
     " in buffer - just send selection
     else
-      " Display a message indicating that the selection is being sent for generation
       echo "sending selection for generation"
-      " Sleep for 500 milliseconds (m is the millisecond suffix in Vim)
       sleep 500m
+
       " Get the position of the end of the selected text
       " getpos("'>")[1:2] returns the line and column number of the end of the selection
       let [l:line_end, l:column_end] = getpos("'>")[1:2]
-      " Set the prompt in the querydata dictionary to the selected text
-      let l:querydata.prompt = l:selectedText
+
       " Append an empty line to the current buffer at the end of the selected text
       let l:failed = appendbufline(l:cbuffer, l:line_end, '')
-      " Update the line dictionary with the new line number for the current buffer
+
+      " save position for callback
       let s:linedict[l:cbuffer] = l:line_end + 1
-      " Clear the register 'a'
-      call setreg("a", "")
+
       " Join the user prompt and the assistant response into a single string
-      let l:querydata.prompt = join(["User:", l:querydata.prompt, "Assistant:"])
+      let l:querydata.prompt = join(["User:", l:selectedText, "Assistant:\n"])
     endif
   endif
 
   " call the model and pass the callback
   let l:curlcommand = copy(s:curlcommand)
-  if exists("g:llama_api_key")
-    call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llama_api_key])
+  if exists("g:llvim_api_key")
+    call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llvim_api_key])
     call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
   endif
-
   "echo querydata.prompt
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})

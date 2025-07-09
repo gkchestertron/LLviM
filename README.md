@@ -8,19 +8,19 @@ Local LLM Plugin for VIM because I'm old but want to try new things, using **lla
 3. Copy the keybindings and variable below into your `~/.vimrc`
 ```vim
 " llama
-let g:llama_api_url= "127.0.0.1:8080/completion"
-autocmd BufWinEnter /tmp/llama-prompt set syntax=markdown
+let g:llvim_api_url= "127.0.0.1:8080/completion"
+autocmd BufWinEnter /tmp/llvim-prompt set syntax=markdown
 " insert mode
-inoremap <C-K> <Cmd>call llama#doLlamaGen()<CR>
+inoremap <C-K> <Cmd>call llvim#doLlamaGen()<CR>
 " normal mode
-nnoremap <C-K> <Cmd>call llama#doLlamaGen()<CR>
-nnoremap <C-B> <Cmd>call llama#openOrClosePromptBuffer()<CR>
+nnoremap <C-K> <Cmd>call llvim#doLlamaGen()<CR>
+nnoremap <C-B> <Cmd>call llvim#openOrClosePromptBuffer()<CR>
 "visual mode
-vnoremap <C-K> <Cmd>call llama#doLlamaGen()<CR>
+vnoremap <C-K> <Cmd>call llvim#doLlamaGen()<CR>
 ```
 
 ## Usage
-First, you must have a running llama server. It can be local or remote, just set an accurate url in the `g:llama_api_url` var in your `~/.vimrc`.
+First, you must have a running llama server. It can be local or remote, just set an accurate url in the `g:llvim_api_url` var in your `~/.vimrc`.
 
 The plugin operates by calling the llama server with the context you provide via a prompt buffer and any open files (depending on what mode you are in).
 
@@ -41,14 +41,14 @@ The plugin operates by calling the llama server with the context you provide via
 
 ### Overriding LLM Settings
 (From original llama.cpp example script)
-`g:llama_api_url`, `g:llama_api_key` and `g:llama_overrides` can be configured in your .vimrc:
+`g:llvim_api_url`, `g:llvim_api_key` and `g:llvim_overrides` can be configured in your .vimrc:
 ```vim
-let g:llama_api_url = "192.168.1.10:9000"
+let g:llvim_api_url = "192.168.1.10:9000"
 ```
 
-`llama_overrides` can also be set through buffer/window scopes. For instance:
+`llvim_overrides` can also be set through buffer/window scopes. For instance:
 ```vim
-autocmd filetype python let `b:llama_overrides` = {"temp": 0.2}
+autocmd filetype python let `b:llvim_overrides` = {"temp": 0.2}
 ```
 Could be added to your .vimrc to automatically set a lower temperature when editing a python script.
 
@@ -59,7 +59,7 @@ Additionally, an override dict can be stored at the top of a file:
 ```
 Could be added to the start of your chatlog.txt to set the stopping token.
 These parameter dicts are merged together from lowest to highest priority:
-server default -> `g:llama_overrides` -> `w:llama_overrides` -> `b:llama_overrides` -> in file (!*) overrides
+server default -> `g:llvim_overrides` -> `w:llvim_overrides` -> `b:llvim_overrides` -> in file (!*) overrides
 
 Sublists (like `logit_bias` and stop) are overridden, not merged
 Example override:
