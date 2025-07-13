@@ -8,6 +8,7 @@ endif
 const s:querydata = {"n_predict": -1, "stream": v:true }
 const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistant.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llvim_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
+let s:skipping_fence = 0
 
 " handle switching to and from context buffer
 function! llvim#openOrClosePromptBuffer()
@@ -128,10 +129,11 @@ func s:callbackHandler(bufn, channel, msg)
   " append the first line of message to the starting line in the file or buffer
   " strip code fences and empty first line if in file
   if len(l:newtext) > 0
-    if bufname(l:bufn) != "/tmp/llvim-prompt" && l:newtext[0] =~# '^```'
-      return
+    if (bufname(l:bufn) != "/tmp/llvim-prompt" && l:newtext[0] =~# '^\s*```') || s:skipping_fence == 1
+      let s:skipping_fence = 1
+    else
+      call setbufline(l:bufn, s:linedict[l:bufn], getbufline(l:bufn, s:linedict[l:bufn])[0] .. newtext[0])
     endif
-    call setbufline(l:bufn, s:linedict[l:bufn], getbufline(l:bufn, s:linedict[l:bufn])[0] .. newtext[0])
   else
     echo "nothing genned"
   endif
@@ -141,20 +143,29 @@ func s:callbackHandler(bufn, channel, msg)
   " and update the line pointer for the next line
   if len(l:newtext) > 1
     for l:line in newtext[1:-1]
-      if bufname(l:bufn) != "/tmp/llvim-prompt" && l:line =~# '^```'
-        return
+      if s:skipping_fence == 1
+        let s:skipping_fence = 0
+        continue
       endif
       let l:result = appendbufline(l:bufn, s:linedict[l:bufn], l:line)
+      let s:linedict[l:bufn] = s:linedict[l:bufn] + 1
     endfor
-    let s:linedict[l:bufn] = s:linedict[l:bufn] + len(newtext)-1
   endif
 
   " done
   if has_key(l:decoded_msg, "stop") && l:decoded_msg.stop
+    let s:skipping_fence = 0
     call llvim#extractLastCodeBlock(a:bufn)
     echo "Finished generation"
   endif
 endfunction
+
+func llvim#test()
+  let l:line = '```markdown'
+  if l:line !~# '\s*^```'
+    echo 'matches'
+  endif
+endfunc
 
 " build context based on, uh... context and send to model for generation
 func llvim#doLlamaGen()
@@ -219,9 +230,8 @@ func llvim#doLlamaGen()
       let s:linedict[l:cbuffer] = line('.')
 
       " build up and set context for generation
-      let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
-      let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
-      let l:querydata.prompt = join(["User:", l:selectedText, l:baseprompt, l:buflines, l:postprompt, "Assistant:"], "\n")
+      let l:baseprompt = "You are a helpful coding assistant that rewrites " . stx . " code samples according to user instructions. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the given code sample to match indentation. Do not return in code blocks.Do not return the instructions. Return just the raw code as if you are typing it into a text editor."
+      let l:querydata.prompt = join([l:baseprompt, "User:", "```" . stx, l:selectedText, "```", l:buflines, "Assistant:"], "\n")
 
     " in context buffer - send up to current line
     else
@@ -330,7 +340,6 @@ func llvim#doLlamaGen()
     call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llvim_api_key])
     call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
   endif
-  "echo querydata.prompt
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
 endfunction
