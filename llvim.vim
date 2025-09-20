@@ -1,12 +1,12 @@
 " get setting overrides
 if !exists("g:llvim_api_url")
-    let g:llvim_api_url= "127.0.0.1:8080/completion"
+    let g:llvim_api_url= "127.0.0.1:8080/v1/chat/completions"
 endif
 if !exists("g:llvim_overrides")
    let g:llvim_overrides = {}
 endif
 const s:querydata = {"n_predict": -1, "stream": v:true }
-const s:curlcommand = ['curl','--data-raw', "{\"prompt\":\"### System: You are a helpful coding assistant.\"}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llvim_api_url, '--header', "Content-Type: application/json"]
+const s:curlcommand = ['curl','--data-raw', "{}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llvim_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
 let s:skipping_fence = 0
 
@@ -122,9 +122,22 @@ func s:callbackHandler(bufn, channel, msg)
     let l:msg = a:msg
   endif
 
+  if l:msg[0:6] == '[DONE]'
+    return
+  endif
+
   " decode message and split into lines
   let l:decoded_msg = json_decode(l:msg)
-  let l:newtext = split(l:decoded_msg['content'], "\n", 1)
+  echom l:msg
+  let l:newtext = []
+  if has_key(l:decoded_msg['choices'][0]['delta'], 'content')
+    let l:newtext = split(l:decoded_msg['choices'][0]['delta']['content'], "\n", 1)
+  else
+    if l:decoded_msg['choices'][0]['finish_reason'] == 'stop'
+      echo "Finished Generation"
+    endif
+    return
+  endif
 
   " append the first line of message to the starting line in the file or buffer
   " strip code fences and empty first line if in file
@@ -230,8 +243,9 @@ func llvim#doLlamaGen()
       let s:linedict[l:cbuffer] = line('.')
 
       " build up and set context for generation
-      let l:baseprompt = "You are a helpful coding assistant that rewrites " . stx . " code samples according to user instructions. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the given code sample to match indentation. Do not return in code blocks.Do not return the instructions. Return just the raw code as if you are typing it into a text editor."
-      let l:querydata.prompt = join([l:baseprompt, "User:", "```" . stx, l:selectedText, "```", l:buflines, "Assistant:"], "\n")
+      let l:baseprompt = "You are a helpful coding assistant that rewrites " . stx . " code samples according to user instructions. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the given code sample to match indentation. Do not return in code blocks. Do not return the instructions. Return just the raw code as if you are typing it into a text editor."
+      let l:context = "```" . stx . "\n" . l:selectedText . "```\n" . l:buflines
+      let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': l:context} ]
 
     " in context buffer - send up to current line
     else
@@ -251,8 +265,10 @@ func llvim#doLlamaGen()
       "move cursor to after where it's gonna insert, so we get to watch it stream in
       call cursor(line('.') + 4, 0)
 
+      let l:baseprompt = "You are a helpful coding assistant. Keep your explanations concise and return code samples in labeled code fences."
+
       " set the prompt string
-      let l:querydata.prompt = join(["User:", l:buflines, "Assistant:"], "\n")
+      let l:querydata.messages = [{'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': l:buflines}]
     endif
 
   " normal mode
@@ -276,9 +292,10 @@ func llvim#doLlamaGen()
       " build and set context
       let stx = &syntax
       let context = join(readfile("/tmp/llvim-context"), "\n")
-      let l:baseprompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
-      let l:postprompt = "Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
-      let l:querydata.prompt = join(["User:", context, l:selectedText, l:baseprompt, "=========", l:buflines, "=========", l:postprompt, "Assistant:"], "\n")
+      let l:baseprompt = "You are a helpful coding assistant. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
+      
+      let l:prompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
+      let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': context}, {'role': 'user', 'content': l:selectedText}, {'role': 'user', 'content': "=========" . l:buflines . "========="}]
 
     " in context buffer - send whole buffer and all open files
     else
@@ -289,7 +306,8 @@ func llvim#doLlamaGen()
       let context = join(readfile("/tmp/llvim-context"), "\n")
       let l:buflines = getbufline(l:cbuffer, 1, '$')
       let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
-      let l:querydata.prompt = join(["User:", context, "=========", l:baseprompt, "=========", join(l:buflines, "\n"), "Assistant:\n"])
+
+      let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': context}, {'role': 'user', 'content': join(l:buflines, "\n")}]
 
       " Store the line number for callback
       let s:linedict[l:cbuffer] = line('$') + 1
@@ -329,8 +347,10 @@ func llvim#doLlamaGen()
       " save position for callback
       let s:linedict[l:cbuffer] = l:line_end + 1
 
+      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
+
       " Join the user prompt and the assistant response into a single string
-      let l:querydata.prompt = join(["User:", l:selectedText, "Assistant:\n"])
+      let l:querydata.messages = [{'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': l:selectedText}])
     endif
   endif
 
@@ -343,3 +363,88 @@ func llvim#doLlamaGen()
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
 endfunction
+
+func llvim#infill()
+  let l:endpoint = 'http://127.0.0.1:9000/infill'
+  let l:input_prefix = '# todo: implement hello world in go\n'
+  let l:input_suffix = '\n'
+  let l:input_extra = []
+  let l:prompt = 'implement a hello world function in go'
+  let l:n_predict = 128
+  let l:stop = []
+  let l:n_indent = 2
+  let l:top_k = 40
+  let l:top_p = 0.90
+  let l:stream = v:false
+  let l:samplers = ["top_k", "top_p", "infill"]
+  let l:cache_prompt = v:true
+  let l:t_max_prompt_ms = 5000
+  let l:t_max_predict_ms = 5000
+
+  " Define the request body with proper variable names
+  let l:request = json_encode({
+        \ 'input_prefix':     l:input_prefix,
+        \ 'input_suffix':     l:input_suffix,
+        \ 'input_extra':      l:input_extra,
+        \ 'prompt':           l:prompt,
+        \ 'n_predict':        l:n_predict,
+        \ 'stop':             l:stop,
+        \ 'n_indent':         l:n_indent,
+        \ 'top_k':            l:top_k,
+        \ 'top_p':            l:top_p,
+        \ 'stream':           l:stream,
+        \ 'samplers':         l:samplers,
+        \ 'cache_prompt':     l:cache_prompt,
+        \ 't_max_prompt_ms':  l:t_max_prompt_ms,
+        \ 't_max_predict_ms': l:t_max_predict_ms,
+        \ 'response_fields':  [
+        \                       "content",
+        \                       "timings/prompt_n",
+        \                       "timings/prompt_ms",
+        \                       "timings/prompt_per_token_ms",
+        \                       "timings/prompt_per_second",
+        \                       "timings/predicted_n",
+        \                       "timings/predicted_ms",
+        \                       "timings/predicted_per_token_ms",
+        \                       "timings/predicted_per_second",
+        \                       "truncated",
+        \                       "tokens_cached",
+        \                     ],
+        \ })
+
+  " Create temporary file
+  "let l:temp_file = tempname()
+  let l:temp_file = "/tmp/llvim-request"
+  call writefile([l:request], l:temp_file)
+
+  " Build curl command
+  let l:curl_command = [
+        \ "curl",
+        \ "--silent",
+        \ "--no-buffer",
+        \ "--request", "POST",
+        \ "--url", l:endpoint,
+        \ "--header", "Content-Type: application/json",
+        \ "-d", "@" . l:temp_file,
+        \ ]
+  echo l:curl_command
+
+  " Execute synchronously
+  let l:output = system(join(l:curl_command, ' '))
+  echo l:output
+
+  " Clean up temporary file
+  "call delete(l:temp_file)
+
+  " Handle errors
+  if v:shell_error
+    echo "Error: " . l:output
+    return ""
+  endif
+
+  " Return the result
+  return l:output
+endfunc
+
+
+
