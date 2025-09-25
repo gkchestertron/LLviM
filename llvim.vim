@@ -30,20 +30,20 @@ let s:tools = [
       \     }
       \   },
       \ },
-      \ {
-      \   'type': 'function',
-      \   'function': {
-      \     'name': 'execute_vim_command',
-      \     'description': 'Allows assistant to provide a command to be executed by vim with `:execute "command". Pass only the command, not "execute". Avoid providing harmful commands. Only call this function if user specifically instructs you to do so. Do not use this function if the user asks you to write code or asks a question. Assume there is already a text selection. Do not operate on whole file (e.g. %s) unless specifically instructed.',
-      \     'parameters': {
-      \       'type': 'object',
-      \       'properties': {
-      \         'command': {'type': 'string', 'description': 'series of characters/commands to pass to :execute'}
-      \       },
-      \       'required': ['command']
-      \     }
-      \   }
-      \ }
+      "\ {
+      "\   'type': 'function',
+      "\   'function': {
+      "\     'name': 'execute_vim_command',
+      "\     'description': 'Allows assistant to provide a command to be executed by vim with `:execute "command". Pass only the command, not "execute". Avoid providing harmful commands. Only call this function if user specifically instructs you to do so. Do not use this function if the user asks you to write code or asks a question. Assume there is already a text selection. Do not operate on whole file (e.g. %s) unless specifically instructed.',
+      "\     'parameters': {
+      "\       'type': 'object',
+      "\       'properties': {
+      "\         'command': {'type': 'string', 'description': 'series of characters/commands to pass to :execute'}
+      "\       },
+      "\       'required': ['command']
+      "\     }
+      "\   }
+      "\ }
       \ ]
 
 " handle switching to and from context buffer
@@ -135,9 +135,8 @@ func! llvim#addHighlightedTexttoContext()
   let l:selection = getreg("a")
   let l:lines = split(l:selection, "\n")
 
-  let l:start_line = line('.')
-  
   " Add line numbers to each line
+  let l:start_line = line('.')
   let l:numbered_lines = []
   for i in range(len(l:lines))
     let l:numbered_lines += [printf("%4d: %s", l:start_line + i, l:lines[i])]
@@ -150,7 +149,7 @@ func! llvim#addHighlightedTexttoContext()
   call llvim#openOrClosePromptBuffer()
 
   " Append each line with proper line breaks and code fence
-  call append(line('$'), 'selection from file: ' . expand('%'))
+  call append(line('$'), 'selection from file: ' . bufname('%'))
   call append(line('$'), "```" . stx)
   for line in l:numbered_lines
     call append(line('$'), line)
@@ -470,11 +469,22 @@ func llvim#doLlamaGen()
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
 endfunction
 
-func! llvim#K(...)
-  let l:prompt = join(a:000, ' ')
-  let l:system_prompt = "You are a helpful assistant in the vim text editor with the ability to control the editor with commands passed to vim's :execute function. Translate the user's natural language command into a command that can be passed to :execute."
+func! llvim#K(start, end, ...) range
+  " get the line numbers
+  let l:lines = getline(a:start, a:end)
+  " Add line numbers to each line
+  let l:start_line = line('.')
+  let stx = &syntax
+  let l:numbered_lines = ['excerpt from file: ' . bufname('%'), '```' . stx]
+  for i in range(len(l:lines))
+    call add(l:numbered_lines, printf("%4d: %s", l:start_line + i, l:lines[i]))
+  endfor
+  call add(l:numbered_lines, '```')
+  let l:prompt = join(l:numbered_lines, "\n") . "\n" . join(a:000, " ")
+  echom l:prompt
+  let l:system_prompt = "You are a helpful assistant with the ability to rewrite sections of code for the user given excerpts with line numbers."
   let s:echo_content = v:true
-  call llvim#callModel(l:system_prompt, l:prompt, [bufname("%")], s:tools)
+  call llvim#callModel(l:system_prompt, l:prompt, [], s:tools)
 endfunc
 
 function! llvim#callModel(system_prompt, user_prompt, context_files, tools)
@@ -508,8 +518,6 @@ function! llvim#callModel(system_prompt, user_prompt, context_files, tools)
   let l:querydata.tools = a:tools
   let l:querydata.tool_choice = "required"
   let l:querydata.messages = messages
-
-  echom messages
 
   " call the model and pass the callback
   let l:curlcommand = copy(s:curlcommand)
