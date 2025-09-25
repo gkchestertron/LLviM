@@ -9,6 +9,42 @@ const s:querydata = {"n_predict": -1, "stream": v:true }
 const s:curlcommand = ['curl','--data-raw', "{}", '--silent', '--no-buffer', '--request', 'POST', '--url', g:llvim_api_url, '--header', "Content-Type: application/json"]
 let s:linedict = {}
 let s:skipping_fence = 0
+let s:echo_content = v:false
+let s:echo_content_message = ''
+let s:tool_calls = []
+let s:tools = [
+      \ {
+      \   'type': 'function',
+      \   'function': {
+      \     'name': 'replace_lines_in_buffer',
+      \     'description': 'Replace a range of lines in a buffer with an array of new nlines. Use when asked to edit code, use this tool to replace one section at a time. Files will be provided with line numbers for convenience. Do not rewrite entire files.',
+      \     'parameters': {
+      \       'type': 'object',
+      \       'properties': {
+      \         'buffer_name': {'type': 'string', 'description': 'Name of the buffer to modify'},
+      \         'start': {'type': 'integer', 'description': 'Starting line number (1-based)'},
+      \         'end': {'type': 'integer', 'description': 'Ending line number (1-based)'},
+      \         'lines': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Array of new lines to insert in place of old lines. Do not separate lines with new line characters, pass each as an item in the lines array.'}
+      \       },
+      \       'required': ['buffer_name', 'start', 'end', 'lines']
+      \     }
+      \   },
+      \ },
+      \ {
+      \   'type': 'function',
+      \   'function': {
+      \     'name': 'execute_vim_command',
+      \     'description': 'Allows assistant to provide a command to be executed by vim with `:execute "command". Pass only the command, not "execute". Avoid providing harmful commands. Only call this function if user specifically instructs you to do so. Do not use this function if the user asks you to write code or asks a question. Assume there is already a text selection. Do not operate on whole file (e.g. %s) unless specifically instructed.',
+      \     'parameters': {
+      \       'type': 'object',
+      \       'properties': {
+      \         'command': {'type': 'string', 'description': 'series of characters/commands to pass to :execute'}
+      \       },
+      \       'required': ['command']
+      \     }
+      \   }
+      \ }
+      \ ]
 
 " handle switching to and from context buffer
 function! llvim#openOrClosePromptBuffer()
@@ -82,14 +118,9 @@ endfunction
 function! llvim#saveHighlightedText()
   " get syntax and selected text
   let stx = &syntax
-  let selected_text = getreg('"')
-
-  " Split selected_text into lines
-  let lines = split(selected_text, '\n')
 
   " open and clear the buffer
   call llvim#openOrClosePromptBuffer()
-  execute '%d'
 
   " Append each line with proper line breaks and code fence
   call append(line('$'), "```" . stx)
@@ -98,6 +129,34 @@ function! llvim#saveHighlightedText()
   endfor
   call append(line('$'), "```")
 endfunction
+
+func! llvim#addHighlightedTexttoContext()
+  execute 'normal "aY'
+  let l:selection = getreg("a")
+  let l:lines = split(l:selection, "\n")
+
+  let l:start_line = line('.')
+  
+  " Add line numbers to each line
+  let l:numbered_lines = []
+  for i in range(len(l:lines))
+    let l:numbered_lines += [printf("%4d: %s", l:start_line + i, l:lines[i])]
+  endfor
+
+  " get syntax and selected text
+  let stx = &syntax
+
+  " open and clear the buffer
+  call llvim#openOrClosePromptBuffer()
+
+  " Append each line with proper line breaks and code fence
+  call append(line('$'), 'selection from file: ' . expand('%'))
+  call append(line('$'), "```" . stx)
+  for line in l:numbered_lines
+    call append(line('$'), line)
+  endfor
+  call append(line('$'), "```")
+endfunc
 
 " handle data coming back from the model
 func s:callbackHandler(bufn, channel, msg)
@@ -128,14 +187,58 @@ func s:callbackHandler(bufn, channel, msg)
 
   " decode message and split into lines
   let l:decoded_msg = json_decode(l:msg)
-  echom l:msg
   let l:newtext = []
+
+  " handle tool_calls
+  if has_key(l:decoded_msg['choices'][0]['delta'], 'tool_calls')
+    let l:tool_calls = l:decoded_msg['choices'][0]['delta']['tool_calls']
+    for l:tool_call in l:tool_calls
+      if has_key(l:tool_call, 'id')
+        call add(s:tool_calls, l:tool_call)
+      elseif has_key(l:tool_call, 'index')
+        let s:tool_calls[l:tool_call['index']]['function']['arguments'] .= l:tool_call['function']['arguments']
+      endif
+    endfor
+    return
+  endif
+
   if has_key(l:decoded_msg['choices'][0]['delta'], 'content')
+    " skip null values
+    if l:decoded_msg['choices'][0]['delta']['content'] == v:null
+      return
+    endif
     let l:newtext = split(l:decoded_msg['choices'][0]['delta']['content'], "\n", 1)
   else
+    if has_key(l:decoded_msg['choices'][0], 'finish_reason') && l:decoded_msg['choices'][0]['finish_reason'] == 'tool_calls'
+      echom 'tool calls'
+      echom s:tool_calls
+      echom 'content'
+      echom s:echo_content_message
+      let s:echo_content_message = ''
+      " execute tool_calls
+      for tool_call in s:tool_calls
+        if tool_call['function']['name'] == 'execute_vim_command'
+          let l:arguments = json_decode(tool_call['function']['arguments'])
+          execute l:arguments['command']
+        endif
+        if tool_call['function']['name'] == 'replace_lines_in_buffer'
+          let l:arguments = json_decode(tool_call['function']['arguments'])
+          call llvim#ReplaceLinesInBuffer(arguments['buffer_name'], arguments['start'], arguments['end'], arguments['lines'])
+        endif
+      endfor
+      let s:echo_content = v:false
+      return
+    endif
     if l:decoded_msg['choices'][0]['finish_reason'] == 'stop'
+      let s:echo_content = v:false
+      call llvim#extractLastCodeBlock(a:bufn)
       echo "Finished Generation"
     endif
+    return
+  endif
+
+  if s:echo_content == v:true
+    let s:echo_content_message .= join(l:newtext, "\n")
     return
   endif
 
@@ -243,7 +346,7 @@ func llvim#doLlamaGen()
       let s:linedict[l:cbuffer] = line('.')
 
       " build up and set context for generation
-      let l:baseprompt = "You are a helpful coding assistant that rewrites " . stx . " code samples according to user instructions. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the given code sample to match indentation. Do not return in code blocks. Do not return the instructions. Return just the raw code as if you are typing it into a text editor."
+      let l:baseprompt = "You are a helpful coding assistant that rewrites " . stx . " code samples according to user instructions. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the given code sample to match indentation. Do not return in code blocks. Do not return the instructions. Return just the raw code as if you are typing it into a text editor. Return only the block(s) asked for unless specifically asked to rewrite a whole file."
       let l:context = "```" . stx . "\n" . l:selectedText . "```\n" . l:buflines
       let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': l:context} ]
 
@@ -252,7 +355,7 @@ func llvim#doLlamaGen()
       stopinsert
       echo "sending up to current line for generation"
       sleep 500m
-      
+
       " add empty lines, so we have line breaks between user and assistant
       let l:failed = appendbufline(l:cbuffer, line('.'), ['', '', '', ''])
 
@@ -265,7 +368,10 @@ func llvim#doLlamaGen()
       "move cursor to after where it's gonna insert, so we get to watch it stream in
       call cursor(line('.') + 4, 0)
 
-      let l:baseprompt = "You are a helpful coding assistant. Keep your explanations concise and return code samples in labeled code fences."
+      let l:baseprompt = "You are a helpful coding assistant operating inside a vim text editor. You can answer questions, give code examples, control the editor through vim commands, and replace text in buffers. Keep your explanations concise and return code samples in labeled code fences. Do not use tools/functions when asked to write code or asked a question. Only call tools/functions when explicitly asked to do so."
+
+      call llvim#callModel(l:baseprompt, l:buflines, [], [])
+      return
 
       " set the prompt string
       let l:querydata.messages = [{'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': l:buflines}]
@@ -292,10 +398,10 @@ func llvim#doLlamaGen()
       " build and set context
       let stx = &syntax
       let context = join(readfile("/tmp/llvim-context"), "\n")
-      let l:baseprompt = "You are a helpful coding assistant. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor."
-      
-      let l:prompt = "Rewrite and return the " . stx . " code sample above according to the instructions below."
-      let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': context}, {'role': 'user', 'content': l:selectedText}, {'role': 'user', 'content': "=========" . l:buflines . "========="}]
+      let l:baseprompt = "You are a helpful coding assistant. Do not explain outside of inline comments. Add the same number of spaces at the beginning of each line as in the sample to match indentation. Do not return in code blocks. Return just the raw code as if you are typing it into a text editor. Return only the block(s) asked for in user instructions unless specifically asked to rewrite a whole file."
+
+      let l:prompt = "Rewrite and return the " . stx . " selected text above according to the instructions below. Use the preceding files for context."
+      let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': context}, {'role': 'user', 'content': '=======' . l:selectedText . '======='}, {'role': 'user', 'content': l:prompt}, {'role': 'user', 'content': "=========" . l:buflines . "========="}]
 
     " in context buffer - send whole buffer and all open files
     else
@@ -305,7 +411,7 @@ func llvim#doLlamaGen()
       " build and set the context for generation
       let context = join(readfile("/tmp/llvim-context"), "\n")
       let l:buflines = getbufline(l:cbuffer, 1, '$')
-      let l:baseprompt = "Always label the language of any code fences/snippets/samples/blocks after the backticks (e.g. ```python). Return only the line, lines or function asked for in the code block. Concisely comment your code."
+      let l:baseprompt = "You are a helpful coding assistant. Keep your explanations concise and return code samples in labeled code fences."
 
       let l:querydata.messages = [ {'role': 'system', 'content': l:baseprompt}, {'role': 'user', 'content': context}, {'role': 'user', 'content': join(l:buflines, "\n")}]
 
@@ -319,21 +425,20 @@ func llvim#doLlamaGen()
 
   " visual mode 
   else
-    " yank currently selected lines
-    execute 'normal "aY'
-    let l:selectedText = getreg("a")
-
     " in file - clear buffer and paste in selected lines
     if bufname("%") != "/tmp/llvim-prompt"
-      call llvim#saveHighlightedText()
-      let l:cbuffer = bufnr("%")
+      call llvim#addHighlightedTexttoContext()
+      return
       let l:failed = appendbufline(l:cbuffer, line('$'), '')
       normal! G$
-      startinsert
       return
 
     " in buffer - just send selection
     else
+      " yank currently selected lines
+      execute 'normal "aY'
+      let l:selectedText = getreg("a")
+
       echo "sending selection for generation"
       sleep 500m
 
@@ -360,8 +465,126 @@ func llvim#doLlamaGen()
     call extend(l:curlcommand, ['--header', 'x-api-key: ' .. g:llvim_api_key])
     call extend(l:curlcommand, ['--header', 'anthropic-version: 2023-06-01'])
   endif
+
   let l:curlcommand[2] = json_encode(l:querydata)
   let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
+endfunction
+
+func! llvim#K(...)
+  let l:prompt = join(a:000, ' ')
+  let l:system_prompt = "You are a helpful assistant in the vim text editor with the ability to control the editor with commands passed to vim's :execute function. Translate the user's natural language command into a command that can be passed to :execute."
+  let s:echo_content = v:true
+  call llvim#callModel(l:system_prompt, l:prompt, [bufname("%")], s:tools)
+endfunc
+
+function! llvim#callModel(system_prompt, user_prompt, context_files, tools)
+  let s:tool_calls = []
+  let l:cbuffer = bufnr("%")
+  " Build the messages array
+  let messages = [
+        \ {'role': 'system', 'content': a:system_prompt},
+        \ {'role': 'user', 'content': a:user_prompt}
+        \]
+
+  " Add context from files with line numbers
+  for file in a:context_files
+    if filereadable(file)
+      let file_content = readfile(file)
+      " Add line numbers to file content
+      let numbered_content = ""
+      let line_number = 1
+      for line in file_content
+        let numbered_content .= printf("%4d: %s\n", line_number, line)
+        let line_number += 1
+      endfor
+      call add(messages, {'role': 'user', 'content': "Context from " . file . ":\n" . numbered_content})
+    else
+      echo "Warning: File not readable: " . file
+    endif
+  endfor
+
+  " Build the query data with tools
+  let l:querydata = copy(s:querydata)
+  let l:querydata.tools = a:tools
+  let l:querydata.tool_choice = "required"
+  let l:querydata.messages = messages
+
+  echom messages
+
+  " call the model and pass the callback
+  let l:curlcommand = copy(s:curlcommand)
+  let l:curlcommand[2] = json_encode(l:querydata)
+  let b:job = job_start(l:curlcommand, {"callback": function("s:callbackHandler", [l:cbuffer])})
+endfunction
+
+" experimental below
+"
+function! llvim#ReplaceLinesInBuffer(buffer_name, start, end, lines)
+    " Get the buffer number from name
+    let bufnr = bufnr(a:buffer_name)
+
+    " Check if buffer exists
+    if bufnr < 0
+        throw 'Buffer not found: ' . a:buffer_name
+    endif
+
+    " Switch to the buffer
+    execute 'buffer' bufnr
+
+    " Validate line range
+    let line_count = line('$')
+    if a:start < 1 || a:end > line_count || a:start > a:end
+        throw 'Invalid line range: ' . a:start . '-' . a:end
+    endif
+
+    " Replace the lines
+    call setline(a:start, a:lines[0])
+    if a:start + 1 < a:end
+      execute (a:start + 1) . ',' . a:end . 'delete'
+    endif
+    call append(a:start, a:lines[1:-1])
+endfunction
+
+function! ExecuteVimCommand(command)
+    " List of dangerous commands to disallow
+    let disallowed_commands = [
+        \ 'shell',
+        \ 'system',
+        \ 'eval',
+        \ 'execute',
+        \ 'readfile',
+        \ 'writefile',
+        \ 'delete',
+        \ 'rename',
+        \ 'glob',
+        \ 'globpath',
+        \ 'jobstart',
+        \ 'jobsend',
+        \ 'jobstop',
+        \ 'jobkill',
+        \ 'jobwait',
+        \ 'jobpid',
+        \ 'jobattr',
+        \ 'jobstatus',
+        \ 'jobset',
+        \ 'jobget',
+        \ 'jobrun',
+        \ ':!']
+
+    " Normalize the command (trim whitespace)
+    let normalized_command = substitute(a:command, '^\s\+', '', '')
+    let normalized_command = substitute(normalized_command, '\s\+$', '', '')
+
+    " Check if command starts with any disallowed command
+    for disallowed in disallowed_commands
+        if stridx(normalized_command, disallowed) == 0
+            echo "Error: Command '" . a:command . "' is not allowed"
+            return
+        endif
+    endfor
+
+    " Execute the command safely
+    execute a:command
 endfunction
 
 func llvim#infill()
@@ -446,5 +669,80 @@ func llvim#infill()
   return l:output
 endfunc
 
+function! GetContextLines(n)
+    " Get the current line number
+    let current_line = line('.')
 
+    " Get n lines before the cursor
+    let lines_before = []
+    let start_line = max([1, current_line - a:n])
+    let end_line = current_line - 1
+    if start_line <= end_line
+        let lines_before = getline(start_line, end_line)
+    endif
 
+    " Get the line at the cursor
+    let current_line_content = getline(current_line)
+
+    " Get n lines after the cursor
+    let lines_after = []
+    let start_line = current_line + 1
+    let end_line = current_line + a:n
+    if start_line <= end_line
+        let lines_after = getline(start_line, end_line)
+    endif
+
+    " Set the results in separate variables
+    let g:lines_before = lines_before
+    let g:current_line = current_line_content
+    let g:lines_after = lines_after
+
+    " Optional: return the variables for immediate use
+    return [lines_before, current_line_content, lines_after]
+endfunction
+
+" A function to call the diffupdate command and refresh the diff display
+function! llvim#DiffCurrentFile()
+    " Store the current buffer number
+    let original_bufnr = bufnr('%')
+    let original_win = bufwinnr(original_bufnr)
+
+    " Get the current file path
+    let current_file = expand('%')
+
+    " Check if we have a current file
+    if current_file == ''
+        echo "No current file open"
+        return
+    endif
+
+    " Get the file extension
+    let file_ext = fnamemodify(current_file, ':e')
+
+    " Generate a temporary file path with same extension
+    let temp_file = tempname() . '.' . file_ext
+
+    " Copy current file to temp file
+    execute 'silent! write ' . temp_file
+
+    " Split the window vertically
+    split
+
+    " Switch back to the original window
+    wincmd w
+
+    " Set up diff mode
+    set diffopt=vertical,filler,context:2
+
+    " Start diff mode
+    execute 'diffsplit ' . temp_file
+
+    " Automatically reload files changed on disk
+    set autoread
+
+    " update the diff as we type
+    autocmd TextChanged * execute 'diffupdate'
+
+    " jump back to original window
+    execute original_win . 'wincmd w'
+endfunction
